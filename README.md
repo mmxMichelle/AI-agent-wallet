@@ -4,6 +4,13 @@ GuardRail Wallet is a Canton / Daml demo that shows how an autonomous agent can
 request payments, get human approval when needed, and settle on real Canton Coin
 on DevNet.
 
+The demo is built to be obvious in a live presentation:
+
+- small payments go through automatically
+- larger payments pause for human approval
+- every important action appears in the live monitor
+- real Canton Coin moves on DevNet
+
 The core idea is simple:
 
 - the Daml `Mandate` contract sets the spending rules
@@ -24,6 +31,21 @@ RequestHighValue
   -> real Canton Coin movement
 ```
 
+## Demo in one glance
+
+| Scenario | Amount | Policy outcome | Ledger result |
+|---|---:|---|---|
+| Small payment | `0.10 CC` | `AUTO APPROVED` | Settles immediately |
+| Large payment | `0.50 CC` | `HUMAN APPROVAL REQUIRED` | Waits for owner approval, then settles |
+
+If you only have 20 seconds, say this:
+
+1. GuardRail Wallet enforces a spending policy in Daml.
+2. Small payments are automatic.
+3. Large payments wait for human approval.
+4. Approved payments are settled on real Canton Coin.
+5. The live monitor shows the resulting ledger events.
+
 ## What is in this repo
 
 | File | What |
@@ -40,7 +62,7 @@ If you are trying to reproduce the demo, start with `SETUP.md`.
 
 **Looking for the problems?** They are in [`CHALLENGES.md`](CHALLENGES.md).
 
-## Demo at a glance
+## How it works
 
 1. Create a mandate with a spending cap and approval threshold.
 2. Request a small payment and let it auto-approve.
