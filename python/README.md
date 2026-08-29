@@ -50,6 +50,16 @@ python3 -m pip install -r python/requirements.txt
 python3 python/live_monitor.py
 ```
 
+Mandate client:
+
+```bash
+python3 python/mandate_client.py parties
+python3 python/mandate_client.py packages
+python3 python/mandate_client.py upload-dar --dar daml-starter/.daml/dist/daml-starter-0.0.1.dar
+python3 python/mandate_client.py create-proposal --owner <OWNER> --spender <SPENDER> --allowed-recipient <RECIPIENT> --cap 1000 --approval-threshold 200 --expires-at 2026-08-30T00:00:00Z
+python3 python/mandate_client.py settle --from-party <SPENDER> --to-party <RECIPIENT> --amount 350
+```
+
 Useful options:
 
 ```bash
@@ -104,12 +114,24 @@ are truncated so the terminal does not flood.
 If the monitor cannot determine a usable subscription party, it exits with a
 clear error instead of sending an empty `filtersByParty` map.
 
+The Mandate client uses the existing Ledger API command flow from `c8lab.py`
+and the documented DAR upload endpoint `POST /v2/packages`. If package upload is
+not permitted on the shared DevNet participant, an organizer/admin must upload
+`daml-starter/.daml/dist/daml-starter-0.0.1.dar` or grant the required admin
+rights.
+
 ## Contract meaning
 
 - `PendingPayment` means a high-value charge has been requested and still
   needs owner approval.
 - `TransactionRecord` is the audit trail for a processed charge, approval, or
   rejection.
+
+Intended demo flow:
+
+`RequestHighValue` -> `PendingPayment` -> owner `Approve` -> `TransactionRecord`
+with `OWNER_APPROVED` -> Python `settle` -> `c8lab.transfer(...)` -> real Canton
+Coin movement.
 
 Current statuses:
 
