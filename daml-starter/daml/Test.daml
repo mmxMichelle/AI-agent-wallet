@@ -30,6 +30,8 @@ testIou = script do
 testMandate : Script ()
 testMandate = script do
   alice    <- allocateParty "Alice"
+  vendor   <- allocateParty "AllowedVendor"
+  attacker <- allocateParty "UnauthorisedVendor"
   merchant <- allocateParty "Merchant"
   now      <- getTime
   let deadline = addRelTime now (hours 24)
@@ -37,26 +39,37 @@ testMandate = script do
   -- Propose and accept. Alice offers, the merchant takes it up.
   prop <- submit alice do
     createCmd MandateProposal with
-      owner = alice; spender = merchant; cap = 100.0; expiresAt = deadline
+      owner = alice; spender = merchant; allowedRecipient = vendor; approvalThreshold = 200.0; cap = 450.0; expiresAt = deadline
   m <- submit merchant do exerciseCmd prop Accept
 
   -- Charging within the cap works, with no signature from Alice.
-  m <- submit merchant do exerciseCmd m Charge with amount = 30.0
-  m <- submit merchant do exerciseCmd m Charge with amount = 50.0
+  m <- submit merchant do exerciseCmd m Charge with amount = 30.0; recipient = vendor
+  m <- submit merchant do exerciseCmd m Charge with amount = 50.0; recipient = vendor
+
+  -- High-value charges must not take the direct path.
+  submitMustFail merchant do exerciseCmd m Charge with amount = 350.0; recipient = vendor
+
+  -- Lower-value charges still work.
+  m <- submit merchant do exerciseCmd m Charge with amount = 100.0; recipient = vendor
+  m <- submit merchant do exerciseCmd m Charge with amount = 100.0; recipient = vendor
+  m <- submit merchant do exerciseCmd m Charge with amount = 100.0; recipient = vendor
+
+  -- Charging to any other recipient fails on the ledger.
+  submitMustFail merchant do exerciseCmd m Charge with amount = 10.0; recipient = attacker
 
   -- Over the cap fails ON THE LEDGER. This is the whole task.
-  submitMustFail merchant do exerciseCmd m Charge with amount = 40.0
+  submitMustFail merchant do exerciseCmd m Charge with amount = 100.0; recipient = vendor
 
   -- Alice cannot charge herself using the merchant's choice.
-  submitMustFail alice do exerciseCmd m Charge with amount = 1.0
+  submitMustFail alice do exerciseCmd m Charge with amount = 1.0; recipient = vendor
 
   -- Raising the cap needs both signatures, so the merchant cannot do it alone.
   submitMustFail merchant do exerciseCmd m Adjust with newCap = 500.0
-  m <- submitMulti [alice, merchant] [] do exerciseCmd m Adjust with newCap = 200.0
+  m <- submitMulti [alice, merchant] [] do exerciseCmd m Adjust with newCap = 500.0
 
   -- Alice revokes. Instantly, and the merchant cannot stop her.
   submit alice do exerciseCmd m Revoke
 
   -- The mandate is gone, so nothing more can be charged.
-  submitMustFail merchant do exerciseCmd m Charge with amount = 1.0
+  submitMustFail merchant do exerciseCmd m Charge with amount = 1.0; recipient = vendor
   pure ()

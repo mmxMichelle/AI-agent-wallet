@@ -19,11 +19,13 @@ template Mandate
   with
     owner    : Party      -- who is paying
     spender  : Party      -- merchant, or agent
+    allowedRecipient : Party
+    approvalThreshold : Decimal
     cap      : Decimal    -- total they may spend over the mandate's life
     spent    : Decimal    -- how much so far
     expiresAt : Time
   where
-    ensure cap > 0.0 && spent >= 0.0 && spent <= cap
+    ensure cap > 0.0 && approvalThreshold > 0.0 && approvalThreshold <= cap && spent >= 0.0 && spent <= cap
 
     -- Both must agree it exists. The owner cannot be signed up without
     -- consenting, and the spender cannot be bound without consenting.
@@ -32,12 +34,15 @@ template Mandate
     -- Spend within the mandate. No owner signature needed, that is the point.
     choice Charge : ContractId Mandate
       with amount : Decimal
+           recipient : Party
       controller spender
       do
         now <- getTime
         -- Deadlines are NOT enforced for you. Check them yourself.
         assertMsg "mandate expired" (now < expiresAt)
         assertMsg "amount must be positive" (amount > 0.0)
+        assertMsg "recipient not allowed" (recipient == allowedRecipient)
+        assertMsg "high value payment requires owner approval" (amount < approvalThreshold)
         assertMsg "charge would exceed the cap" (spent + amount <= cap)
         create this with spent = spent + amount
 
@@ -62,6 +67,8 @@ template MandateProposal
   with
     owner    : Party
     spender  : Party
+    allowedRecipient : Party
+    approvalThreshold : Decimal
     cap      : Decimal
     expiresAt : Time
   where
@@ -70,7 +77,7 @@ template MandateProposal
 
     choice Accept : ContractId Mandate
       controller spender
-      do create Mandate with owner; spender; cap; spent = 0.0; expiresAt
+      do create Mandate with owner; spender; allowedRecipient; approvalThreshold; cap; spent = 0.0; expiresAt
 
     choice Reject : ()
       controller spender
