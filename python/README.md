@@ -56,6 +56,8 @@ Useful options:
 python3 python/live_monitor.py --from-now
 python3 python/live_monitor.py --reconnect-seconds 1.5
 python3 python/live_monitor.py --state-file python/monitor_state.json
+python3 python/live_monitor.py --party Alice::123 --party Bob::456
+python3 python/live_monitor.py --debug-protocol
 ```
 
 ## Resume and checkpointing
@@ -73,14 +75,34 @@ On startup it:
 
 The checkpoint file is written atomically.
 
-The WebSocket subscription message is the `GetUpdatesRequest` JSON shape used by
-the Canton Ledger API. This monitor sends:
+The WebSocket subscription message is the Canton Ledger API `GetUpdatesRequest`
+shape. This monitor sends:
 
 ```json
-{"beginExclusive": 123, "verbose": true}
+{
+  "beginExclusive": 123,
+  "updateFormat": {
+    "includeTransactions": {
+      "transactionShape": "TRANSACTION_SHAPE_LEDGER_EFFECTS",
+      "eventFormat": {
+        "filtersByParty": {
+          "Alice": {}
+        },
+        "verbose": true
+      }
+    }
+  }
+}
 ```
 
 `endInclusive` is only added if a bounded read is requested.
+
+`--debug-protocol` prints the exact subscription JSON, raw incoming WebSocket
+frames, close status code and reason, and exception type/message. Large frames
+are truncated so the terminal does not flood.
+
+If the monitor cannot determine a usable subscription party, it exits with a
+clear error instead of sending an empty `filtersByParty` map.
 
 ## Contract meaning
 
