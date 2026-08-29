@@ -38,7 +38,14 @@ RequestHighValue
 | Small payment | `0.10 CC` | `AUTO APPROVED` | Settles immediately |
 | Large payment | `0.50 CC` | `HUMAN APPROVAL REQUIRED` | Waits for owner approval, then settles |
 
-If you only have 20 seconds, say this:
+## Demo
+
+🎥 [Watch the GuardRail Wallet demo](demo/GuardRail-Wallet-How-It-Works.mp4)
+
+The demo shows two cases:
+
+- **Small payment:** below the approval threshold → automatically approved and settled.
+- **Large payment:** above the approval threshold → paused until explicit human approval.
 
 1. GuardRail Wallet enforces a spending policy in Daml.
 2. Small payments are automatic.
