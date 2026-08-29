@@ -6,7 +6,7 @@ terminal in real time.
 
 ## What it does
 
-It follows ledger updates for the parties you specify, filters for the mandate
+It follows the WebSocket ledger update stream, filters for the mandate
 contracts, and turns those ledger events into readable terminal alerts.
 
 It does not enforce policy. The Daml contract enforces the mandate rules.
@@ -38,26 +38,24 @@ export C8_CLIENT_ID=hackathon
 export C8_CLIENT_SECRET=...
 ```
 
-You also need to tell the monitor which parties to watch:
+Install the WebSocket dependency:
 
 ```bash
-python3 python/live_monitor.py --party <party-id>
+python3 -m pip install -r python/requirements.txt
 ```
-
-You can repeat `--party` for multiple parties.
 
 ## Run
 
 ```bash
-python3 python/live_monitor.py --party <party-id>
+python3 python/live_monitor.py
 ```
 
 Useful options:
 
 ```bash
-python3 python/live_monitor.py --party <party-id> --from-now
-python3 python/live_monitor.py --party <party-id> --poll-seconds 1.5
-python3 python/live_monitor.py --party <party-id> --state-file python/monitor_state.json
+python3 python/live_monitor.py --from-now
+python3 python/live_monitor.py --reconnect-seconds 1.5
+python3 python/live_monitor.py --state-file python/monitor_state.json
 ```
 
 ## Resume and checkpointing
@@ -70,9 +68,19 @@ On startup it:
 1. Loads the saved offset if present.
 2. Falls back to the current ledger end if no checkpoint exists, unless
    `--from-now` is set.
-3. Updates the checkpoint only after a ledger update has been processed.
+3. Connects to the WebSocket stream at `wss://<ledger-host>/v2/updates`.
+4. Updates the checkpoint only after a ledger update has been processed.
 
 The checkpoint file is written atomically.
+
+The WebSocket subscription message is the `GetUpdatesRequest` JSON shape used by
+the Canton Ledger API. This monitor sends:
+
+```json
+{"beginExclusive": 123, "verbose": true}
+```
+
+`endInclusive` is only added if a bounded read is requested.
 
 ## Contract meaning
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 import tempfile
@@ -14,9 +15,14 @@ if str(PY_DIR) not in sys.path:
     sys.path.insert(0, str(PY_DIR))
 
 from live_monitor import (  # noqa: E402
+    build_updates_request,
+    advance_cursor,
     format_pending_payment,
     format_transaction_record,
+    ledger_ws_url,
+    _load_or_init_offset,
     parse_update_item,
+    stream_ws_updates,
 )
 from monitor_state import load_last_offset, save_last_offset  # noqa: E402
 
@@ -87,6 +93,22 @@ def transaction_record_update(status: str) -> dict:
 
 
 class LiveMonitorParsingTests(unittest.TestCase):
+    def test_ws_url(self) -> None:
+        self.assertEqual(
+            ledger_ws_url(),
+            "ws://localhost:2975/v2/updates",
+        )
+
+    def test_subscription_request_shape(self) -> None:
+        self.assertEqual(
+            build_updates_request(123),
+            {"beginExclusive": 123, "verbose": True},
+        )
+        self.assertEqual(
+            build_updates_request(123, end_inclusive=456),
+            {"beginExclusive": 123, "verbose": True, "endInclusive": 456},
+        )
+
     def test_pending_payment_created_event_parsing(self) -> None:
         parsed = parse_update_item(pending_payment_update())
         self.assertEqual(parsed.offset, 101)
@@ -152,6 +174,41 @@ class LiveMonitorParsingTests(unittest.TestCase):
         self.assertEqual(parsed.events, [])
         self.assertIsNotNone(parsed.warning)
 
+    def test_websocket_subscription_request_sent(self) -> None:
+        class FakeWS:
+            def __init__(self) -> None:
+                self.sent = []
+                self.closed = False
+                self.messages = [
+                    json.dumps(pending_payment_update()),
+                ]
+
+            def send(self, payload: str) -> None:
+                self.sent.append(payload)
+
+            def recv(self):
+                if self.messages:
+                    return self.messages.pop(0)
+                raise StopIteration
+
+            def close(self) -> None:
+                self.closed = True
+
+        fake_ws = FakeWS()
+
+        def fake_connect():
+            return fake_ws
+
+        gen = stream_ws_updates(88, connect_fn=fake_connect)
+        first = next(gen)
+        self.assertEqual(first, pending_payment_update())
+        self.assertEqual(
+            json.loads(fake_ws.sent[0]),
+            {"beginExclusive": 88, "verbose": True},
+        )
+        gen.close()
+        self.assertTrue(fake_ws.closed)
+
 
 class StateFileTests(unittest.TestCase):
     def test_state_file_round_trip(self) -> None:
@@ -160,6 +217,39 @@ class StateFileTests(unittest.TestCase):
             self.assertIsNone(load_last_offset(path))
             save_last_offset(path, "12345")
             self.assertEqual(load_last_offset(path), "12345")
+
+    def test_resume_prefers_saved_offset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "monitor_state.json"
+            save_last_offset(path, "42")
+            self.assertEqual(_load_or_init_offset(path, False), 42)
+
+    def test_cursor_advances_for_unrelated_updates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "monitor_state.json"
+            parsed = parse_update_item({
+                "update": {
+                    "transaction": {
+                        "offset": 303,
+                        "events": [
+                            {
+                                "createdEvent": {
+                                    "contractId": "cid-other",
+                                    "templateId": {
+                                        "packageId": "pkg-1",
+                                        "moduleName": "Other",
+                                        "entityName": "Noise",
+                                    },
+                                    "createArguments": {"foo": {"text": "bar"}},
+                                }
+                            }
+                        ],
+                    }
+                }
+            })
+            cursor = advance_cursor(100, parsed, path)
+            self.assertEqual(cursor, 303)
+            self.assertEqual(load_last_offset(path), "303")
 
 
 if __name__ == "__main__":

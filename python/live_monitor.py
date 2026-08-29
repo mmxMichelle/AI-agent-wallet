@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Live Canton Ledger monitor for Mandate contract activity.
 
-This follows the Ledger API update feed for one or more parties, filters for
+This follows the ledger WebSocket update feed, filters for
 Mandate.PendingPayment and Mandate.TransactionRecord creations, and prints
 human-readable terminal alerts.
 """
@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import os
 import pathlib
 import sys
 import time
@@ -28,6 +27,7 @@ from monitor_state import load_last_offset, save_last_offset  # noqa: E402
 
 
 DEFAULT_STATE_FILE = pathlib.Path(__file__).with_name("monitor_state.json")
+DEFAULT_RECONNECT_DELAY_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -259,6 +259,14 @@ def _fmt_field(fields: dict[str, Any], name: str) -> str:
     return _text(fields.get(name))
 
 
+def advance_cursor(cursor: int, parsed: ParsedUpdate,
+                   state_file: pathlib.Path) -> int:
+    if parsed.offset is not None:
+        cursor = max(cursor, parsed.offset)
+        save_last_offset(state_file, cursor)
+    return cursor
+
+
 def format_pending_payment(event: ParsedContractEvent) -> str:
     fields = event.fields
     lines = [
@@ -308,32 +316,6 @@ def _coerce_int(value: Any) -> int:
     raise ValueError(f"cannot coerce {value!r} to int")
 
 
-def _resolve_parties(args: argparse.Namespace) -> list[str]:
-    parties = list(args.party or [])
-    if parties:
-        return parties
-
-    env = os.environ.get("C8_MONITOR_PARTIES")
-    if env:
-        return [p.strip() for p in env.split(",") if p.strip()]
-
-    single = os.environ.get("C8_MONITOR_PARTY")
-    if single:
-        return [single.strip()]
-
-    try:
-        local = c8lab.local_parties()
-    except Exception:
-        local = []
-    if local:
-        return local
-
-    raise c8lab.LabError(
-        "no monitor parties configured. Pass --party, or set C8_MONITOR_PARTY "
-        "/ C8_MONITOR_PARTIES."
-    )
-
-
 def _load_or_init_offset(state_file: pathlib.Path, from_now: bool) -> int:
     if not from_now:
         saved = load_last_offset(state_file)
@@ -342,66 +324,95 @@ def _load_or_init_offset(state_file: pathlib.Path, from_now: bool) -> int:
     return c8lab.ledger_end()
 
 
-def _fetch_updates(parties: list[str], begin: int, end: int, batch_size: int) -> list[Any]:
-    body = {
-        "parties": parties,
-        "beginOffsetExclusive": begin,
-        "endOffsetInclusive": end,
-        "limit": batch_size,
+def ledger_ws_url() -> str:
+    base = c8lab.BASE.rstrip("/")
+    if base.startswith("https://"):
+        return "wss://" + base[len("https://"):] + "/v2/updates"
+    if base.startswith("http://"):
+        return "ws://" + base[len("http://"):] + "/v2/updates"
+    return base + "/v2/updates"
+
+
+def build_updates_request(begin_exclusive: int, end_inclusive: Optional[int] = None,
+                          verbose: bool = True) -> dict[str, Any]:
+    request: dict[str, Any] = {
+        "beginExclusive": begin_exclusive,
+        "verbose": verbose,
     }
-    result = c8lab.call("/v2/updates", body)
-    if isinstance(result, list):
-        return result
-    if isinstance(result, dict):
-        for key in ("updates", "items", "result", "data"):
-            value = result.get(key)
-            if isinstance(value, list):
-                return value
-        return [result]
-    return [result]
+    if end_inclusive is not None:
+        request["endInclusive"] = end_inclusive
+    return request
 
 
-def run_monitor(parties: list[str], state_file: pathlib.Path, from_now: bool,
-                poll_seconds: float, batch_size: int) -> None:
+def websocket_headers() -> list[str]:
+    return [f"Authorization: Bearer {c8lab.token()}"]
+
+
+def _open_ws_connection():
+    try:
+        import websocket  # type: ignore
+    except ModuleNotFoundError as exc:  # pragma: no cover - dependency issue
+        raise c8lab.LabError(
+            "websocket-client is required. Install python/requirements.txt."
+        ) from exc
+    return websocket.create_connection(
+        ledger_ws_url(),
+        header=websocket_headers(),
+        timeout=30,
+    )
+
+
+def _recv_ws_message(ws: Any) -> Any:
+    raw = ws.recv()
+    if raw is None:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+    return raw
+
+
+def stream_ws_updates(begin_exclusive: int, end_inclusive: Optional[int] = None,
+                      connect_fn=_open_ws_connection):
+    ws = connect_fn()
+    try:
+        request = build_updates_request(begin_exclusive, end_inclusive=end_inclusive)
+        ws.send(json.dumps(request))
+        while True:
+            yield _recv_ws_message(ws)
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+
+def run_monitor(state_file: pathlib.Path, from_now: bool,
+                reconnect_delay_seconds: float) -> None:
     cursor = _load_or_init_offset(state_file, from_now)
-    print(f"Monitoring parties: {', '.join(parties)}")
+    print(f"WebSocket URL: {ledger_ws_url()}")
     print(f"Starting from offset: {cursor}")
     print(f"State file: {state_file}")
 
     while True:
         try:
-            ledger_end = c8lab.ledger_end()
-            if ledger_end <= cursor:
-                time.sleep(poll_seconds)
-                continue
-
-            while cursor < ledger_end:
-                updates = _fetch_updates(parties, cursor, ledger_end, batch_size)
-                if not updates:
-                    break
-
-                progressed = False
-                for raw in updates:
-                    parsed = parse_update_item(raw)
-                    if parsed.warning:
-                        print(f"warning: {parsed.warning}", file=sys.stderr)
-                    if parsed.offset is not None:
-                        cursor = max(cursor, parsed.offset)
+            for raw in stream_ws_updates(cursor):
+                parsed = parse_update_item(raw)
+                if parsed.warning:
+                    print(f"warning: {parsed.warning}", file=sys.stderr)
+                    continue
+                cursor = advance_cursor(cursor, parsed, state_file)
+                if parsed.checkpoint:
+                    continue
+                for event in parsed.events:
+                    print(render_event(event))
+                    if event.offset is not None:
+                        cursor = max(cursor, event.offset)
                         save_last_offset(state_file, cursor)
-                        progressed = True
-                    if parsed.checkpoint:
-                        continue
-                    for event in parsed.events:
-                        print(render_event(event))
-                        if event.offset is not None:
-                            cursor = max(cursor, event.offset)
-                            save_last_offset(state_file, cursor)
-                            progressed = True
-
-                if not progressed:
-                    break
-
-            time.sleep(poll_seconds)
         except KeyboardInterrupt:
             print("\nmonitor stopped")
             return
@@ -410,19 +421,14 @@ def run_monitor(parties: list[str], state_file: pathlib.Path, from_now: bool,
             print(f"monitor error: {message}", file=sys.stderr)
             if "401" in message or "403" in message or "C8_CLIENT_SECRET" in message:
                 raise SystemExit(1)
-            time.sleep(max(poll_seconds, 2.0))
+            time.sleep(max(reconnect_delay_seconds, 2.0))
         except Exception as exc:  # pragma: no cover - defensive
             print(f"unexpected monitor failure: {exc}", file=sys.stderr)
-            time.sleep(max(poll_seconds, 2.0))
+            time.sleep(max(reconnect_delay_seconds, 2.0))
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Monitor Mandate contract activity")
-    parser.add_argument(
-        "--party",
-        action="append",
-        help="party ID to monitor; repeat for multiple parties",
-    )
     parser.add_argument(
         "--from-now",
         action="store_true",
@@ -434,16 +440,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="checkpoint file path (default: python/monitor_state.json)",
     )
     parser.add_argument(
-        "--poll-seconds",
+        "--reconnect-seconds",
         type=float,
-        default=2.0,
-        help="poll interval in seconds",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=200,
-        help="maximum number of updates to fetch per poll",
+        default=DEFAULT_RECONNECT_DELAY_SECONDS,
+        help="delay before reconnecting after a socket failure",
     )
     return parser
 
@@ -451,13 +451,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    parties = _resolve_parties(args)
     run_monitor(
-        parties=parties,
         state_file=pathlib.Path(args.state_file),
         from_now=args.from_now,
-        poll_seconds=args.poll_seconds,
-        batch_size=args.batch_size,
+        reconnect_delay_seconds=args.reconnect_seconds,
     )
 
 
