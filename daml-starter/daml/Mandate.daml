@@ -46,6 +46,32 @@ template Mandate
         assertMsg "charge would exceed the cap" (spent + amount <= cap)
         create this with spent = spent + amount
 
+    -- High-value payments go through an owner approval flow.
+    choice RequestHighValue : ContractId PendingPayment
+      with amount : Decimal
+           recipient : Party
+           purpose : Text
+      controller spender
+      do
+        now <- getTime
+        assertMsg "mandate expired" (now < expiresAt)
+        assertMsg "amount must be positive" (amount > 0.0)
+        assertMsg "recipient not allowed" (recipient == allowedRecipient)
+        assertMsg "high value payment requires owner approval" (amount >= approvalThreshold)
+        assertMsg "charge would exceed the cap" (spent + amount <= cap)
+        create PendingPayment with
+          owner
+          spender
+          recipient
+          amount
+          purpose
+          cap
+          spentBefore = spent
+          expiresAt
+          allowedRecipient
+          approvalThreshold
+          requestedAt = now
+
     -- The owner can always stop it, and the spender cannot block that.
     choice Revoke : ()
       controller owner
@@ -58,6 +84,42 @@ template Mandate
       do
         assertMsg "new cap below what is already spent" (newCap >= spent)
         create this with cap = newCap
+
+
+template PendingPayment
+  with
+    owner : Party
+    spender : Party
+    recipient : Party
+    amount : Decimal
+    purpose : Text
+    cap : Decimal
+    spentBefore : Decimal
+    expiresAt : Time
+    allowedRecipient : Party
+    approvalThreshold : Decimal
+    requestedAt : Time
+  where
+    signatory spender
+    observer owner
+
+    choice Approve : ContractId Mandate
+      controller owner
+      do
+        now <- getTime
+        assertMsg "mandate expired" (now < expiresAt)
+        create Mandate with
+          owner
+          spender
+          allowedRecipient
+          approvalThreshold
+          cap
+          spent = spentBefore + amount
+          expiresAt
+
+    choice Reject : ContractId Mandate
+      controller owner
+      do create Mandate with owner; spender; allowedRecipient; approvalThreshold; cap; spent = spentBefore; expiresAt
 
 
 -- Propose and accept: the most common shape in Daml.
@@ -79,6 +141,6 @@ template MandateProposal
       controller spender
       do create Mandate with owner; spender; allowedRecipient; approvalThreshold; cap; spent = 0.0; expiresAt
 
-    choice Reject : ()
+    choice RejectProposal : ()
       controller spender
       do pure ()

@@ -73,3 +73,44 @@ testMandate = script do
   -- The mandate is gone, so nothing more can be charged.
   submitMustFail merchant do exerciseCmd m Charge with amount = 1.0; recipient = vendor
   pure ()
+
+testPendingPayment : Script ()
+testPendingPayment = script do
+  alice    <- allocateParty "Alice"
+  vendor   <- allocateParty "AllowedVendor"
+  attacker <- allocateParty "UnauthorisedVendor"
+  merchant <- allocateParty "Merchant"
+  now      <- getTime
+  let deadline = addRelTime now (hours 24)
+
+  -- Direct high-value charges still fail on the mandate.
+  prop1 <- submit alice do
+    createCmd MandateProposal with
+      owner = alice; spender = merchant; allowedRecipient = vendor; approvalThreshold = 200.0; cap = 500.0; expiresAt = deadline
+  m1 <- submit merchant do exerciseCmd prop1 Accept
+  submitMustFail merchant do exerciseCmd m1 Charge with amount = 350.0; recipient = vendor
+
+  -- High-value requests create a pending payment.
+  pending1 <- submit merchant do exerciseCmd m1 RequestHighValue with amount = 350.0; recipient = vendor; purpose = "Laptop"
+  submitMustFail merchant do exerciseCmd pending1 Approve
+  m1 <- submit alice do exerciseCmd pending1 Approve
+  m1 <- submit merchant do exerciseCmd m1 Charge with amount = 100.0; recipient = vendor
+  submitMustFail merchant do exerciseCmd m1 Charge with amount = 160.0; recipient = vendor
+
+  -- Rejection restores the mandate without changing spentBefore.
+  prop2 <- submit alice do
+    createCmd MandateProposal with
+      owner = alice; spender = merchant; allowedRecipient = vendor; approvalThreshold = 200.0; cap = 500.0; expiresAt = deadline
+  m2 <- submit merchant do exerciseCmd prop2 Accept
+  pending2 <- submit merchant do exerciseCmd m2 RequestHighValue with amount = 350.0; recipient = vendor; purpose = "Servers"
+  m2 <- submit alice do exerciseCmd pending2 Reject
+  m2 <- submit merchant do exerciseCmd m2 Charge with amount = 160.0; recipient = vendor
+
+  -- Wrong recipient and over-cap requests fail on the ledger.
+  prop3 <- submit alice do
+    createCmd MandateProposal with
+      owner = alice; spender = merchant; allowedRecipient = vendor; approvalThreshold = 200.0; cap = 500.0; expiresAt = deadline
+  m3 <- submit merchant do exerciseCmd prop3 Accept
+  submitMustFail merchant do exerciseCmd m3 RequestHighValue with amount = 350.0; recipient = attacker; purpose = "Fraud"
+  submitMustFail merchant do exerciseCmd m3 RequestHighValue with amount = 600.0; recipient = vendor; purpose = "TooMuch"
+  pure ()
