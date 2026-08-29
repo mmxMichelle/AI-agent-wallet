@@ -1,3 +1,7 @@
+
+
+https://github.com/user-attachments/assets/6bea3491-8094-4818-9d60-55a0e4ee22c9
+
 # GuardRail Wallet
 
 GuardRail Wallet is a Canton / Daml demo that shows how an autonomous agent can
