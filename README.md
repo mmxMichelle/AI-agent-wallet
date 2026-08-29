@@ -1,6 +1,58 @@
-# Canton hackathon toolkit
+# GuardRail Wallet
 
-Get to your first Canton transaction without installing much.
+GuardRail Wallet is a Canton / Daml demo that shows how an autonomous agent can
+request payments, get human approval when needed, and settle on real Canton Coin
+on DevNet.
+
+The core idea is simple:
+
+- the Daml `Mandate` contract sets the spending rules
+- the Python live monitor watches `PendingPayment` and `TransactionRecord`
+- the Python demo client submits approvals and settlement
+- `c8lab.py` reuses the Cantor8 toolkit for authentication, parties, registry,
+  and token transfers
+
+Final demo flow:
+
+```text
+RequestHighValue
+  -> PendingPayment
+  -> owner Approve / Reject
+  -> TransactionRecord
+  -> Python settle
+  -> c8lab.transfer(...)
+  -> real Canton Coin movement
+```
+
+## What is in this repo
+
+| File | What |
+|---|---|
+| `CHALLENGES.md` | The original hackathon prompts |
+| `SETUP.md` | LocalNet setup and the Daml toolchain |
+| `API.md` | Tested API cheat sheet |
+| `TROUBLESHOOTING.md` | The failures we actually hit and how to fix them |
+| `c8lab.py` | The shared Cantor8 toolkit |
+| `python/` | Live monitor, Mandate client, and demo UI helpers |
+| `daml-starter/` | Working Daml package for the mandate flow |
+
+If you are trying to reproduce the demo, start with `SETUP.md`.
+
+**Looking for the problems?** They are in [`CHALLENGES.md`](CHALLENGES.md).
+
+## Demo at a glance
+
+1. Create a mandate with a spending cap and approval threshold.
+2. Request a small payment and let it auto-approve.
+3. Request a larger payment and pause for human approval.
+4. Settle the approved payment on Canton Coin.
+5. Watch the live monitor print the resulting ledger activity.
+
+This repo is intentionally small: the Daml model enforces policy, and Python
+orchestrates the demo and observes the ledger. It does not add an LLM, frontend,
+or custom settlement engine.
+
+## Tooling
 
 `c8lab.py` is Python 3, **stdlib only**, no `pip install`. That is deliberate:
 some laptops are locked down and you do not want to debug pip on the day.
@@ -9,19 +61,6 @@ It runs against two targets:
 
 - **LocalNet**, a whole Canton network in Docker on your laptop. The default.
 - **DevNet**, the shared Cantor8 node. Set four environment variables.
-
-| File | What |
-|---|---|
-| `CHALLENGES.md` | The problems, and what to build |
-| `SETUP.md` | Install LocalNet, and the Daml toolchain if you need it |
-| `API.md` | Tested cheat sheet of the APIs you will use, and what needs a token |
-| `TROUBLESHOOTING.md` | Every error we actually hit, and the fix |
-| `c8lab.py` | The lab |
-| `daml-starter/` | Working Daml to copy from, including the mandate task |
-
-Start with `SETUP.md`, come back here.
-
-**Looking for the problems?** They are in [`CHALLENGES.md`](CHALLENGES.md).
 
 ## The lab
 
