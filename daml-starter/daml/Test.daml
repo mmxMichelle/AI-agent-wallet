@@ -43,25 +43,25 @@ testMandate = script do
   m <- submit merchant do exerciseCmd prop Accept
 
   -- Charging within the cap works, with no signature from Alice.
-  m <- submit merchant do exerciseCmd m Charge with amount = 30.0; recipient = vendor
-  m <- submit merchant do exerciseCmd m Charge with amount = 50.0; recipient = vendor
+  (m, _) <- submit merchant do exerciseCmd m Charge with amount = 30.0; recipient = vendor; purpose = "Monthly subscription"
+  (m, _) <- submit merchant do exerciseCmd m Charge with amount = 50.0; recipient = vendor; purpose = "Support"
 
   -- High-value charges must not take the direct path.
-  submitMustFail merchant do exerciseCmd m Charge with amount = 350.0; recipient = vendor
+  submitMustFail merchant do exerciseCmd m Charge with amount = 350.0; recipient = vendor; purpose = "Laptop"
 
   -- Lower-value charges still work.
-  m <- submit merchant do exerciseCmd m Charge with amount = 100.0; recipient = vendor
-  m <- submit merchant do exerciseCmd m Charge with amount = 100.0; recipient = vendor
-  m <- submit merchant do exerciseCmd m Charge with amount = 100.0; recipient = vendor
+  (m, _) <- submit merchant do exerciseCmd m Charge with amount = 100.0; recipient = vendor; purpose = "Seats"
+  (m, _) <- submit merchant do exerciseCmd m Charge with amount = 100.0; recipient = vendor; purpose = "Storage"
+  (m, _) <- submit merchant do exerciseCmd m Charge with amount = 100.0; recipient = vendor; purpose = "Compute"
 
   -- Charging to any other recipient fails on the ledger.
-  submitMustFail merchant do exerciseCmd m Charge with amount = 10.0; recipient = attacker
+  submitMustFail merchant do exerciseCmd m Charge with amount = 10.0; recipient = attacker; purpose = "Fraud"
 
   -- Over the cap fails ON THE LEDGER. This is the whole task.
-  submitMustFail merchant do exerciseCmd m Charge with amount = 100.0; recipient = vendor
+  submitMustFail merchant do exerciseCmd m Charge with amount = 100.0; recipient = vendor; purpose = "Overflow"
 
   -- Alice cannot charge herself using the merchant's choice.
-  submitMustFail alice do exerciseCmd m Charge with amount = 1.0; recipient = vendor
+  submitMustFail alice do exerciseCmd m Charge with amount = 1.0; recipient = vendor; purpose = "Wrong controller"
 
   -- Raising the cap needs both signatures, so the merchant cannot do it alone.
   submitMustFail merchant do exerciseCmd m Adjust with newCap = 500.0
@@ -71,7 +71,7 @@ testMandate = script do
   submit alice do exerciseCmd m Revoke
 
   -- The mandate is gone, so nothing more can be charged.
-  submitMustFail merchant do exerciseCmd m Charge with amount = 1.0; recipient = vendor
+  submitMustFail merchant do exerciseCmd m Charge with amount = 1.0; recipient = vendor; purpose = "After revoke"
   pure ()
 
 testPendingPayment : Script ()
@@ -88,14 +88,14 @@ testPendingPayment = script do
     createCmd MandateProposal with
       owner = alice; spender = merchant; allowedRecipient = vendor; approvalThreshold = 200.0; cap = 500.0; expiresAt = deadline
   m1 <- submit merchant do exerciseCmd prop1 Accept
-  submitMustFail merchant do exerciseCmd m1 Charge with amount = 350.0; recipient = vendor
+  submitMustFail merchant do exerciseCmd m1 Charge with amount = 350.0; recipient = vendor; purpose = "Laptop"
 
   -- High-value requests create a pending payment.
   pending1 <- submit merchant do exerciseCmd m1 RequestHighValue with amount = 350.0; recipient = vendor; purpose = "Laptop"
   submitMustFail merchant do exerciseCmd pending1 Approve
-  m1 <- submit alice do exerciseCmd pending1 Approve
-  m1 <- submit merchant do exerciseCmd m1 Charge with amount = 100.0; recipient = vendor
-  submitMustFail merchant do exerciseCmd m1 Charge with amount = 160.0; recipient = vendor
+  (m1, _) <- submit alice do exerciseCmd pending1 Approve
+  (m1, _) <- submit merchant do exerciseCmd m1 Charge with amount = 100.0; recipient = vendor; purpose = "Accessories"
+  submitMustFail merchant do exerciseCmd m1 Charge with amount = 160.0; recipient = vendor; purpose = "Overflow"
 
   -- Rejection restores the mandate without changing spentBefore.
   prop2 <- submit alice do
@@ -103,8 +103,8 @@ testPendingPayment = script do
       owner = alice; spender = merchant; allowedRecipient = vendor; approvalThreshold = 200.0; cap = 500.0; expiresAt = deadline
   m2 <- submit merchant do exerciseCmd prop2 Accept
   pending2 <- submit merchant do exerciseCmd m2 RequestHighValue with amount = 350.0; recipient = vendor; purpose = "Servers"
-  m2 <- submit alice do exerciseCmd pending2 Reject
-  m2 <- submit merchant do exerciseCmd m2 Charge with amount = 160.0; recipient = vendor
+  (m2, _) <- submit alice do exerciseCmd pending2 Reject
+  (m2, _) <- submit merchant do exerciseCmd m2 Charge with amount = 160.0; recipient = vendor; purpose = "Post rejection"
 
   -- Wrong recipient and over-cap requests fail on the ledger.
   prop3 <- submit alice do
@@ -113,4 +113,66 @@ testPendingPayment = script do
   m3 <- submit merchant do exerciseCmd prop3 Accept
   submitMustFail merchant do exerciseCmd m3 RequestHighValue with amount = 350.0; recipient = attacker; purpose = "Fraud"
   submitMustFail merchant do exerciseCmd m3 RequestHighValue with amount = 600.0; recipient = vendor; purpose = "TooMuch"
+  pure ()
+
+testAuditTrailLowValue : Script ()
+testAuditTrailLowValue = script do
+  alice    <- allocateParty "Alice"
+  vendor   <- allocateParty "AllowedVendor"
+  merchant <- allocateParty "Merchant"
+  now      <- getTime
+  let deadline = addRelTime now (hours 24)
+
+  prop <- submit alice do
+    createCmd MandateProposal with
+      owner = alice; spender = merchant; allowedRecipient = vendor; approvalThreshold = 200.0; cap = 500.0; expiresAt = deadline
+  m <- submit merchant do exerciseCmd prop Accept
+  chargeTime <- getTime
+  (m, recordCid) <- submit merchant do exerciseCmd m Charge with amount = 50.0; recipient = vendor; purpose = "Monthly subscription"
+  Some record <- queryContractId alice recordCid
+  assertMsg "auto approval record" (record == TransactionRecord with owner = alice; spender = merchant; recipient = vendor; amount = 50.0; purpose = "Monthly subscription"; timestamp = chargeTime; status = "AUTO_APPROVED"; spentBefore = 0.0; spentAfter = 50.0)
+  Some mandate <- queryContractId alice m
+  assertMsg "mandate updated after auto approval" (spent mandate == 50.0)
+  pure ()
+
+testAuditTrailApprove : Script ()
+testAuditTrailApprove = script do
+  alice    <- allocateParty "Alice"
+  vendor   <- allocateParty "AllowedVendor"
+  merchant <- allocateParty "Merchant"
+  now      <- getTime
+  let deadline = addRelTime now (hours 24)
+
+  prop <- submit alice do
+    createCmd MandateProposal with
+      owner = alice; spender = merchant; allowedRecipient = vendor; approvalThreshold = 200.0; cap = 500.0; expiresAt = deadline
+  m <- submit merchant do exerciseCmd prop Accept
+  pending <- submit merchant do exerciseCmd m RequestHighValue with amount = 350.0; recipient = vendor; purpose = "Laptop"
+  approveTime <- getTime
+  (m, recordCid) <- submit alice do exerciseCmd pending Approve
+  Some record <- queryContractId alice recordCid
+  assertMsg "owner approval record" (record == TransactionRecord with owner = alice; spender = merchant; recipient = vendor; amount = 350.0; purpose = "Laptop"; timestamp = approveTime; status = "OWNER_APPROVED"; spentBefore = 0.0; spentAfter = 350.0)
+  Some mandate <- queryContractId alice m
+  assertMsg "mandate updated after owner approval" (spent mandate == 350.0)
+  pure ()
+
+testAuditTrailReject : Script ()
+testAuditTrailReject = script do
+  alice    <- allocateParty "Alice"
+  vendor   <- allocateParty "AllowedVendor"
+  merchant <- allocateParty "Merchant"
+  now      <- getTime
+  let deadline = addRelTime now (hours 24)
+
+  prop <- submit alice do
+    createCmd MandateProposal with
+      owner = alice; spender = merchant; allowedRecipient = vendor; approvalThreshold = 200.0; cap = 500.0; expiresAt = deadline
+  m <- submit merchant do exerciseCmd prop Accept
+  pending <- submit merchant do exerciseCmd m RequestHighValue with amount = 350.0; recipient = vendor; purpose = "Servers"
+  rejectTime <- getTime
+  (m, recordCid) <- submit alice do exerciseCmd pending Reject
+  Some record <- queryContractId alice recordCid
+  assertMsg "owner rejection record" (record == TransactionRecord with owner = alice; spender = merchant; recipient = vendor; amount = 350.0; purpose = "Servers"; timestamp = rejectTime; status = "OWNER_REJECTED"; spentBefore = 0.0; spentAfter = 0.0)
+  Some mandate <- queryContractId alice m
+  assertMsg "mandate unchanged after rejection" (spent mandate == 0.0)
   pure ()

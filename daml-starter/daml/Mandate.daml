@@ -32,9 +32,10 @@ template Mandate
     signatory owner, spender
 
     -- Spend within the mandate. No owner signature needed, that is the point.
-    choice Charge : ContractId Mandate
+    choice Charge : (ContractId Mandate, ContractId TransactionRecord)
       with amount : Decimal
            recipient : Party
+           purpose : Text
       controller spender
       do
         now <- getTime
@@ -44,7 +45,18 @@ template Mandate
         assertMsg "recipient not allowed" (recipient == allowedRecipient)
         assertMsg "high value payment requires owner approval" (amount < approvalThreshold)
         assertMsg "charge would exceed the cap" (spent + amount <= cap)
-        create this with spent = spent + amount
+        tr <- create TransactionRecord with
+          owner
+          spender
+          recipient
+          amount
+          purpose
+          timestamp = now
+          status = "AUTO_APPROVED"
+          spentBefore = spent
+          spentAfter = spent + amount
+        m <- create this with spent = spent + amount
+        pure (m, tr)
 
     -- High-value payments go through an owner approval flow.
     choice RequestHighValue : ContractId PendingPayment
@@ -103,12 +115,22 @@ template PendingPayment
     signatory spender
     observer owner
 
-    choice Approve : ContractId Mandate
+    choice Approve : (ContractId Mandate, ContractId TransactionRecord)
       controller owner
       do
         now <- getTime
         assertMsg "mandate expired" (now < expiresAt)
-        create Mandate with
+        tr <- create TransactionRecord with
+          owner
+          spender
+          recipient
+          amount
+          purpose
+          timestamp = now
+          status = "OWNER_APPROVED"
+          spentBefore = spentBefore
+          spentAfter = spentBefore + amount
+        m <- create Mandate with
           owner
           spender
           allowedRecipient
@@ -116,10 +138,40 @@ template PendingPayment
           cap
           spent = spentBefore + amount
           expiresAt
+        pure (m, tr)
 
-    choice Reject : ContractId Mandate
+    choice Reject : (ContractId Mandate, ContractId TransactionRecord)
       controller owner
-      do create Mandate with owner; spender; allowedRecipient; approvalThreshold; cap; spent = spentBefore; expiresAt
+      do
+        now <- getTime
+        tr <- create TransactionRecord with
+          owner
+          spender
+          recipient
+          amount
+          purpose
+          timestamp = now
+          status = "OWNER_REJECTED"
+          spentBefore = spentBefore
+          spentAfter = spentBefore
+        m <- create Mandate with owner; spender; allowedRecipient; approvalThreshold; cap; spent = spentBefore; expiresAt
+        pure (m, tr)
+
+
+template TransactionRecord
+  with
+    owner : Party
+    spender : Party
+    recipient : Party
+    amount : Decimal
+    purpose : Text
+    timestamp : Time
+    status : Text
+    spentBefore : Decimal
+    spentAfter : Decimal
+  where
+    signatory spender
+    observer owner
 
 
 -- Propose and accept: the most common shape in Daml.
