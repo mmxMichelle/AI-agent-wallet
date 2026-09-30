@@ -1,155 +1,120 @@
-# AI agent architecture
+# Local autonomous agent architecture
 
-The extension is standard-library Python and is isolated in `ai_agent/`.
-The original `python/`, `c8lab.py`, and `daml-starter/` are frozen.
-The original offline UI is preserved and is a future integration point, not
-a dependency of this CLI.
+The AI layer performs no network I/O and uses no LLM. The original `c8lab.py`,
+`python/` payment implementation and `daml-starter/` contracts are frozen.
 
-```text
-Untrusted request -> Provider -> strict JSON -> grounded PaymentIntent
-                                                   |
-Trusted context snapshot + full policy ------------+----+
-                                                   |    |
-                                                   v    |
-                                      GovernedAgent     |
-                                      bounded tool loop |
-                                       |                |
-                 read-only allowlist --+                |
-                 balance/history/policy/risk            |
-                                       |                |
-                                       v                v
-                                Recommendation -> Guardrail
-                                                       |
-                                            immutable Assessment
-                                                       |
-                                      explicit ExecutionController
-                                      fresh context + guardrail
-                                      block / wait / human decision
-                                                       |
-                                    +------------------+----------------+
-                                    v                                   v
-                              Mock recorder                    Optional legacy adapter
-                              no state change                  existing Mandate commands
-                                                                       |
-                                                          Existing owner approval and
-                                                          settlement remain separate
-```
+Agent != LLM. Here the agent combines local perception, immutable context,
+transaction memory, allowlisted tools, unsupervised learning, planning, explicit
+state, guarded actions, and outcome feedback. It is not an unbounded daemon.
 
-## Components and choices
+## Components
 
 | Module | Responsibility |
 |---|---|
-| `models.py` | Frozen dataclasses, actions, Decimal validation, strict JSON |
-| `providers.py` | Provider Protocol, central factory, mock, OpenAI-compatible and Ollama transports |
-| `parser.py` | Validate output and ground recipient/amount/currency/purpose in request |
-| `memory.py` | Context Protocol and JSON snapshot repository |
-| `policy.py`, `retrieval.py` | Validated DEMO thresholds and stable token overlap retrieval |
-| `risk.py` | Recipient statistics and deterministic anomaly indicators |
-| `tools.py` | Five explicitly allowlisted, snapshot-bound read-only tools |
-| `orchestrator.py` | Bounded model/tool dialogue, recommendation, mandatory guardrail |
-| `guardrail.py` | Hard blocks, review rules, monotonic combination |
-| `ledger.py` | Separate execution controller and mock recorder |
-| `legacy_adapter.py` | Disabled-by-default lazy wrappers around legacy functions |
-| `logging_utils.py` | Allowlisted JSON audit records |
-| `cli.py`, `evaluation.py` | Offline demos and reproducible golden evaluation |
+| `parser.py` | Explicit grammar -> validated Decimal PaymentIntent; ambiguity blocks |
+| `models.py` | Immutable financial schemas, strict JSON and Decimal validation |
+| `event_source.py` | Finite demo, stdin, and local JSONL events |
+| `state_machine.py` | Valid lifecycle edges and auditable transition history |
+| `planner.py` | Missing-observation selection and conservative local proposal |
+| `agent_loop.py` | Bounded observe-plan-act loop and separate outcome coordinator |
+| `orchestrator.py` | Compatibility import for the local agent API |
+| `tools.py` | Snapshot-bound balance, recipient/history, policy and risk tools |
+| `memory.py` | Trusted local context, optional JSON audit store, demo reservations |
+| `features.py` | Fourteen ordered, finite numerical features |
+| `anomaly.py` | Fitted local robust-scaled kNN anomaly detector |
+| `risk.py` | Decimal policy signals plus monotonic learned anomaly contribution |
+| `guardrail.py` | Unchanged hard rules, review rules, monotonic action combination |
+| `ledger.py` | Explicit controller; fresh deterministic preflight and replay protection |
+| `legacy_adapter.py` | Existing disabled-by-default lazy legacy boundary wrappers |
+| `logging_utils.py` | Structured public audit fields, no raw history or credentials |
+| `evaluation.py` | Actual local assessment runs and computed fixture metrics |
 
-Small explicit modules make the trust boundaries inspectable without an agent
-framework, vector database, SDK, or trained anomaly model. Immutable dataclasses
-keep an assessment tied to its parsed intent. Money and ratios use Decimal;
-evaluation rates use ordinary numerical ratios, not monetary floats.
+## Observe-plan-act
 
-## Data flow and agent boundary
+Each event starts with a fresh session. The planner sees observations already
+available and returns a typed Step. The loop validates that step, performs its
+allowed action, records a compact public observation, and asks the planner again.
+The executor rejects out-of-order steps and guardrail-bypassing proposals.
 
-The provider receives system instructions and separately encoded untrusted user
-data. Strict JSON rejects duplicate keys, non-finite constants, fences, trailing
-text, unknown fields, and invalid types. Domain validation rejects empty or
-ambiguous recipients, unsupported currency, invalid confidence, and nonpositive
-amounts. A deterministic grounding check prevents a provider from changing the
-recipient, amount, currency, or purpose. Unsupported language must clarify.
+1. Validate intent before reading a context snapshot. Invalid input blocks.
+2. Fetch balance and retrieve policy through bound local tools. Hard deterministic
+   rules can shortcut directly to risk/guardrail without model or history tools.
+3. Fetch missing recipient and transaction history. One snapshot is reused within
+   an assessment; no duplicate observation request is accepted.
+4. Build features, infer a local score, compute risk, and propose an action.
+5. Apply the independent deterministic guardrail. Stop assessment in BLOCKED,
+   WAITING_FOR_HUMAN, or READY_FOR_EXECUTION.
+6. The event coordinator obtains any required human decision and calls the
+   separate execution controller. The model and read-only tools cannot submit.
+7. Record the outcome in local memory before receiving the next event.
 
-The loop accepts either a validated tool request or a validated recommendation.
-Tool arguments must be exactly `{}`: tools use the already bound intent/context.
-No model argument can specify paths, override history, or change policy. At most
-six tools can run, followed by one final model response (seven loop responses
-maximum, plus the intent parsing response). Protocol errors, provider errors,
-unknown tools, and exhaustion escalate with zero confidence. Invalid intents
-block before tools. Context/configuration failures abort without execution.
+`assess` performs steps 1–5 only unless `--interactive` is selected. `run-agent`
+uses the finite event loop and mock execution. Default limits are 20 assessment
+steps and 20 events (configurable within 1–100 and 1–1000). Exhaustion or local
+component failure blocks without execution. Exceptions are sanitized rather than
+recording arbitrary tool/model text. No private reasoning is generated or logged.
 
-Retrieval returns five ranked excerpts with references. All policy fields remain
-available to the deterministic guardrail even when absent from retrieval. The
-agent can choose a different tool order or finish early; guardrail safety does
-not depend on the agent collecting evidence correctly.
+## States and planning actions
 
-Context stores balance, daily spend, and timestamped transaction fixtures.
-Recipient count, averages, new/trusted status, and relative amounts are computed
-from that snapshot. Demo history is explicitly illustrative, not ledger evidence.
-Repeated-spend evaluation supplies accumulated daily spend in a fresh fixture;
-mock submissions do not manufacture settled transaction history.
+States: RECEIVED, VALIDATING, GATHERING_CONTEXT, BUILDING_FEATURES,
+ASSESSING_ANOMALY, ASSESSING_RISK, PLANNING, WAITING_FOR_HUMAN,
+READY_FOR_EXECUTION, EXECUTING, BLOCKED, COMPLETED, FAILED.
 
-## Policy and execution boundaries
+Actions: VALIDATE_INTENT, FETCH_BALANCE, LOAD_POLICY, FETCH_RECIPIENT_HISTORY,
+FETCH_TRANSACTION_HISTORY, BUILD_FEATURES, RUN_ANOMALY_MODEL, ASSESS_RISK, PLAN,
+REQUIRE_HUMAN, BLOCK, EXECUTE, COMPLETE. COMPLETE is an outcome-coordinator
+transition; EXECUTE during assessment only marks readiness, never submits.
 
-Supplemental AI policy controls whether this application should hand a request
-to Daml. It cannot authorize ledger spending. Daml Mandate choices retain their
-original signatories/controllers, recipient restriction, threshold, expiry,
-and cap behavior. The extension does not fix or redesign existing contracts.
+The state-machine edge table rejects illegal transitions. Any nonterminal state
+may fail closed. COMPLETED cannot be reopened. Review can complete as rejection,
+remain waiting, or move through READY_FOR_EXECUTION and EXECUTING after explicit
+approval. A refreshed execution check can still block or require review.
 
-The final action is `max(model action, deterministic action)` by restriction:
-proceed < review < block. A human confirmation permits a reviewed request to
-reach the execution controller, but never changes a hard block into approval.
-The controller refreshes context and reruns preflight before submission. It
-consumes successful/declined attempts within its process to avoid local replay.
+## Learning and features
 
-`LegacyDamlPaymentExecutionAdapter` requires explicit enablement, a trusted
-Mandate CID, spender party, threshold, and exact recipient-to-party mapping.
-It calls existing `charge_command` or `request_high_value_command` and
-`submit_command`. Daml validates the actual choice regardless of the configured
-threshold. This one-shot adapter neither approves nor settles. After submission,
-existing tooling must resolve new contract IDs and perform owner approval and
-settlement. This avoids recreating the tested settlement logic. The legacy
-wallet adapter obtains unlocked Amulet holdings through `c8lab.holdings`; history
-and daily spend must be supplied by the trusted caller. That incomplete live
-context integration is one reason no live execution CLI is provided.
+The dependency-free LocalKNNAnomalyModel fits 128 synthetic reference vectors
+using fixed seed 2048. Synthetic identities, amounts and contexts are generated
+independently of evaluation inputs. These are demo normal-behaviour examples,
+not real financial history or fraud labels. No network, cloud, downloads, or
+pickled code is involved. Scikit-learn was unavailable and is not a dependency.
 
-## Bring Your Own Model / Bring Your Own Key
+Feature order is defined by TransactionFeatures fields:
+amount, amount_to_balance_ratio, recipient_transaction_count,
+recipient_frequency, recipient_average_amount, amount_vs_recipient_average,
+overall_average_amount, amount_vs_overall_average, daily_spend, daily_spend_ratio,
+new_recipient, trusted_recipient, time_since_last_recipient_payment,
+recipient_time_missing. Budget ratio includes proposed spend. Missing averages
+map to zero alongside explicit new-recipient status; zero balance maps to ratio
+one and still triggers deterministic insufficient-balance checks. Optional
+elapsed time requires explicit timezone-aware observation time; assessment uses
+the missing indicator by default rather than wall-clock-dependent model inputs.
 
-GuardRail Wallet has no maintainer-paid inference requirement. Users own their
-credentials and explicitly choose `mock`, `openai-compatible`, or `ollama`.
-The default remains offline, deterministic mock; model/key/endpoint presence
-alone never selects an external provider. Evaluation always uses mock.
+Training learns each feature's median and interquartile scale, with a scale floor
+for constant features. Inference averages the three nearest normalized Euclidean
+distances. The normalization uses median leave-one-out training distance:
+`score = distance / (distance + 8 * reference_distance)`. The factor eight is a
+conservative demo calibration, not a statistically calibrated probability. The
+model detects unusual behaviour; it neither proves fraud nor authorizes payment.
 
-`providers.create_provider(provider_name=None, model=None, base_url=None)` is
-the central selection/configuration layer. CLI arguments override environment
-variables, which override safe defaults. `LLM_PROVIDER` defaults to `mock`.
-Generic APIs use `LLM_BASE_URL`, `LLM_MODEL`, and environment-only `LLM_API_KEY`.
-Ollama uses `OLLAMA_BASE_URL` (default `http://localhost:11434`) and
-`OLLAMA_MODEL`, and never forwards `LLM_API_KEY`. There is no default model.
-No secrets belong in config files; `.env.example` is reference-only and `.env`
-is ignored, not automatically loaded. No vendor SDK or paid dependency is added.
+The original weighted anomaly heuristic remains as a conservative policy signal.
+Risk uses the maximum of it and the learned score; model selection cannot lower
+existing restrictions. Model exceptions/invalid scores block. Hard financial
+rules are independent of anomaly scores and evaluated even on early-block paths.
 
-The existing `LLMProvider.complete(messages) -> str` Protocol is preserved.
-Both HTTP adapters normalize their vendor envelope into bounded JSON text before
-it reaches the agent. The provider rejects malformed envelopes, incomplete
-responses, vendor tool calls, and non-JSON content. Strict downstream schema
-validation, grounding, tool allowlisting, risk computation, and deterministic
-guardrails still run. Parser, orchestrator, tools, and guardrail require no
-provider-specific logic. All models have identical restricted privileges.
+## Memory and authority
 
-OpenAI-compatible mode supports hosted APIs and user-run local servers such as
-LM Studio. Ollama uses `/api/chat` with JSON format and streaming disabled.
-Local models can avoid hosted API charges but require user-provided compute,
-model availability, and appropriate hardware. Nothing starts servers, installs
-software, or downloads weights automatically.
+Default context comes from clearly labelled local demo history. Optional JSON
+memory records audit outcomes and mock reservations only. Accepted mock handoffs
+reduce available demo balance and increase demo daily spend for future events.
+They do not create settled history, recipient trust, or online training examples.
+Blocked/rejected/waiting events reserve nothing. Memory is bounded to 1000 audit
+records, atomically replaced with mode 0600, and tested with temporary paths.
+Fixture files cannot be loaded as writable memory because their schema differs.
+Use a fresh file to reset a demo; this is not ledger reconciliation.
 
-CLI provider/environment selection is explicit opt-in to sending context; no
-provider is autodetected and failures never fall back. Network requests have a
-20-second socket timeout, 64-KiB response envelope limit, 10,000-character content
-limit, disabled redirects/proxies, and HTTPS except for explicit loopback hosts.
-Generic non-loopback endpoints require a user API key; local compatible servers
-may omit it. Transport/error bodies are not surfaced. Provider failure at intent
-parsing blocks; failure during recommendations triggers existing human escalation,
-with hard deterministic blocks still enforced. Execution authority is unchanged.
-
-Live Canton adapters require separate explicit construction/enablement; importing
-them does not import the legacy runtime. Tests use fake runtime functions and a
-subprocess that forbids legacy imports and networking. No Canton, DevNet, remote
-LLM, owner-signature, or real settlement integration was verified in this work.
+The controller still refreshes context and reruns deterministic guardrails before
+handoff; original assessment restrictions remain binding. Live execution requires
+explicit trusted construction of the existing legacy adapter, a Mandate CID,
+spender, recipient-party mapping, and complete trusted context. It has no live
+CLI path. The existing Daml controllers and owner approval/settlement remain
+separate. No new signer, secret, shell tool or unrestricted transfer was added.

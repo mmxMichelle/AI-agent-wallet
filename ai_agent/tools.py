@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from .models import PaymentIntent, WalletContext, ValidationError, jsonable
 from .policy import WalletPolicy
-from .providers import TOOL_NAMES
+TOOL_NAMES = ('get_balance', 'get_transaction_history', 'get_recipient_history',
+              'retrieve_wallet_policy', 'calculate_risk_signals')
 from .retrieval import retrieve
 from .risk import calculate_risk
 
@@ -23,7 +24,7 @@ class ToolRequest:
 class ReadOnlyTools:
     """All tools are bound to one trusted snapshot and one validated intent.
 
-    No model-supplied paths, recipients, amounts or policy overrides are accepted.
+    No caller-supplied paths, recipients, amounts or policy overrides are accepted.
     """
     names = TOOL_NAMES
 

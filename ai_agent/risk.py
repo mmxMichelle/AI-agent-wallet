@@ -4,7 +4,7 @@ from .models import PaymentIntent, WalletContext, RiskSignals
 from .policy import WalletPolicy
 
 
-def calculate_risk(intent: PaymentIntent, context: WalletContext, policy: WalletPolicy) -> RiskSignals:
+def calculate_risk(intent: PaymentIntent, context: WalletContext, policy: WalletPolicy, anomaly_score=None) -> RiskSignals:
     amounts = [t.amount for t in context.recent_transactions if t.currency == intent.currency]
     recipient = [t.amount for t in context.recent_transactions
                  if t.recipient == intent.recipient and t.currency == intent.currency]
@@ -16,7 +16,13 @@ def calculate_risk(intent: PaymentIntent, context: WalletContext, policy: Wallet
     score = min(D('1'), (D('0.25') if not recipient and not trusted else D('0'))
                 + (D('0.35') if ratio > D('0.5') else D('0'))
                 + (D('0.4') if max(rr or D('0'), overall or D('0')) > 3 else D('0')))
-    # Category labels from a model are not authoritative: also inspect literal purpose terms.
+    if anomaly_score is not None:
+        from .models import decimal, ValidationError
+        learned = decimal(anomaly_score)
+        if not 0 <= learned <= 1:
+            raise ValidationError('Anomaly score outside [0, 1]')
+        score = max(score, learned)  # ML can only add restriction to existing signals.
+    # Structured category labels do not erase literal purpose terms.
     words = set(re.findall(r'\w+', intent.purpose.lower()))
     blocked = bool(words & set(policy.blocked_categories)) or (intent.category or '').lower() in policy.blocked_categories
     return RiskSignals(ratio, not recipient, trusted, len(recipient), ra, oa, rr, overall,

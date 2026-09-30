@@ -20,7 +20,7 @@ class CliAuditTests(unittest.TestCase):
                 self.assertEqual(main(['demo']), 0)
             text = out.getvalue()
             self.assertIn('no Canton Coin moved', text)
-            self.assertIn({'yes': 'WOULD_SUBMIT', 'no': 'DECLINED', '': 'AWAITING_HUMAN'}[answer], text)
+            self.assertIn({'yes': 'WOULD_SUBMIT', 'no': 'REJECTED_BY_HUMAN', '': 'AWAITING_HUMAN'}[answer], text)
 
     def test_audit_fields_and_no_raw_prompts(self):
         record = audit_record(GovernedAgent().assess('Pay Alice 0.05 CC for coffee'))
@@ -30,7 +30,7 @@ class CliAuditTests(unittest.TestCase):
         self.assertFalse({'messages', 'api_key', 'provider', 'chain_of_thought'} & set(record))
         json.dumps(record)
 
-    def test_remote_never_automatic(self):
-        with patch('ai_agent.cli.OpenAICompatibleProvider', side_effect=AssertionError('remote called')):
+    def test_local_cli_never_networks(self):
+        with patch('socket.socket.connect', side_effect=AssertionError('Network forbidden')):
             with patch('sys.stdout', new_callable=io.StringIO):
                 self.assertEqual(main(['assess', 'Pay Alice 0.05 CC for coffee']), 0)

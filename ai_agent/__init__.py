@@ -1,1 +1,1 @@
-"""Optional governed payment recommendations; importing this package performs no I/O."""
+"""Privacy-preserving local autonomous payment agent. No network inference."""

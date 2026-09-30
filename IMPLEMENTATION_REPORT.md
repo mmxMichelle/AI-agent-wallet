@@ -1,181 +1,154 @@
-# Implementation report
+# Local autonomous agent implementation report
 
-Completed locally on 2026-09-30 on `feature/governed-ai-agent`.
-No clone, push, pull request, merge, history rewrite, or commit was performed.
-The backup branch `backup/pre-ai-agent-baseline` was retained.
+## Snapshot, scope and baseline
 
-## Baseline and scope
+The working tree initially contained only the known provider experiment. It was
+preserved in local commit `3de40d2` on
+`backup/byom-before-local-autonomous-agent`. The redesign is on
+`feature/local-autonomous-ai`. No branch was pushed, no history was rewritten,
+and the redesign itself remains uncommitted for review.
 
-The writable repository started clean at `5a99eea`. Before editing:
+Before editing, the baseline passed: 85 AI tests, 13 mandate tests, 4 demo UI
+tests, and 30/30 golden scenarios with unsafe_proceed_rate = 0.
 
-| Command | Result |
-|---|---|
-| `python3 -m unittest python/test_mandate_client.py -v` | 13 passed |
-| `python3 -m unittest python/test_demo_ui.py -v` | 4 passed |
+The frozen `c8lab.py`, all `python/` payment code including mandate_client and
+demo_ui, and `daml-starter/` remain unchanged. Existing settlement and payment
+command semantics were not modified. The read-only hackathon-toolkit dependency
+was not modified, and nothing was cloned. Guardrail rules and thresholds are
+unchanged. The existing execution controller changed only a docstring.
 
-Both local trees were inspected. The read-only `hackathon-toolkit` already had
-a modified `daml-starter/daml/Mandate.daml` and untracked `get-daml.sh`; those
-pre-existing changes were reported and left untouched. No files were created,
-formatted, moved, or edited in that tree. All new assets are inside AI-agent-wallet.
+## Architectural decision
 
-Legacy entry points are `python/mandate_client.py` command builders and
-`submit_command`, `DemoState.request_payment` / `approve_payment` / `reject_payment`,
-and `c8lab.py` CLI/helpers. Settlement is `DemoState._settle` ->
-`mandate_client.settle_payment` -> `c8lab.transfer`, with offer acceptance through
-`c8lab.accept_transfer`. Daml Mandate and PendingPayment choices control the
-existing authorization boundary; settlement is separate from the Daml record.
+An earlier provider/BYOM/BYOK design was intentionally removed to keep financial
+context inside the local trust boundary. Provider implementations, network
+transports, endpoint/key/model settings, provider CLI flags and provider-specific
+tests were deleted/replaced. History on the backup branch preserves that work;
+there is no dormant external-inference path in the active architecture.
 
-## Implemented
+The product is now GuardRail Wallet — Privacy-Preserving Autonomous AI Payment
+Agent. No external LLM is used. The implementation supports this accurate
+portfolio description:
 
-- Strict immutable domain objects and Decimal monetary validation.
-- Grounded natural-language parsing with explicit clarification failures.
-- Provider Protocol, deterministic scripted mock, optional HTTPS-compatible
-  inference transport with sanitized errors and no vendor dependency.
-- Local JSON policy/history, deterministic token retrieval, recipient statistics,
-  bounded anomaly signals, and full-policy deterministic preflight.
-- Five read-only allowlisted tools and a bounded model/tool loop.
-- Monotonic safety escalation, including guardrails when the model skips tools.
-- Separate execution controller with fresh preflight, explicit yes/no, local
-  replay protection, mock recording, and disabled-by-default lazy legacy adapters.
-- Parse, assess, demo, and eval CLI commands; offline is the default.
-- Structured stdout audit records without credentials or private reasoning.
-- Thirty golden scenarios, five calculated metrics, and 58 offline tests.
-- Architecture, safety, evaluation, and additive README documentation.
+> Designed a local-first autonomous payment agent combining transaction-context
+> analysis, unsupervised anomaly detection, state-machine planning,
+> human-in-the-loop escalation and deterministic Daml-based execution controls.
 
-## Files added
+> Kept financial data inside the local trust boundary rather than relying on
+> hosted inference.
 
-```text
-.env.example
-IMPLEMENTATION_REPORT.md
-ai_agent/__init__.py
-ai_agent/cli.py
-ai_agent/config.py
-ai_agent/evaluation.py
-ai_agent/guardrail.py
-ai_agent/ledger.py
-ai_agent/legacy_adapter.py
-ai_agent/logging_utils.py
-ai_agent/memory.py
-ai_agent/models.py
-ai_agent/orchestrator.py
-ai_agent/parser.py
-ai_agent/policy.py
-ai_agent/providers.py
-ai_agent/retrieval.py
-ai_agent/risk.py
-ai_agent/tools.py
-config/wallet_policy.json
-data/demo_history.json
-eval/scenarios.json
-docs/AI_AGENT_ARCHITECTURE.md
-docs/SAFETY_MODEL.md
-docs/EVALUATION.md
-tests/test_cli_audit.py
-tests/test_evaluation.py
-tests/test_execution_adapter.py
-tests/test_guardrail.py
-tests/test_legacy_boundary.py
-tests/test_models.py
-tests/test_orchestrator.py
-tests/test_parser.py
-tests/test_policy.py
-tests/test_providers.py
-tests/test_retrieval.py
-tests/test_risk.py
-tests/test_tools.py
-```
+## Actual autonomy and modules
 
-Only existing file modified: `README.md`, with an entry link and additive AI
-Agent Extension section. The original explanation remains intact.
+Events arrive from finite demo, stdin or local JSONL sources. A session records
+observations and explicit lifecycle transitions. The planner chooses the next
+missing observation, the loop invokes a bound read-only tool, observes its
+result and plans again. It does not blindly run every operation: invalid intent
+stops before context access, observations are cached, and hard policy blocks
+skip history tools/features/model work. Max steps fail closed.
 
-Deliberately unchanged: `c8lab.py`; all existing files under `python/`, including
-`mandate_client.py`, `demo_ui.py`, `live_monitor.py`, `monitor_state.py`, existing
-tests and requirements; all of `daml-starter/`, including Mandate, Iou, Test and
-`daml.yaml`; existing setup/API/troubleshooting documents and demo video.
+The state machine includes received, validating, gathering context, building
+features, assessing anomaly, assessing risk, planning, waiting for human,
+ready for execution, executing, blocked, completed and failed states. Invalid
+transitions are rejected and terminal sessions cannot be reopened.
 
-## Architecture decisions
+The model and planner have no signing, secret, shell or transfer authority.
+Assessment stops at a guarded decision. A separate coordinator obtains explicit
+human approval where necessary, calls the existing execution controller and
+records feedback before the next event. The controller refreshes deterministic
+preflight, preserves restrictions and prevents local replay. Ambiguous execution
+errors are sanitized and never automatically retried.
 
-Use explicit standard-library code so the orchestration and authority boundary
-can be explained and audited. Use JSON snapshots rather than adding a database;
-mock submissions intentionally do not alter balances or invent settled history.
-Use lexical policy retrieval rather than hosted embeddings. Compute risk from
-trusted snapshots rather than model assertions. Always run full deterministic
-policy independently of retrieval and tool selection. Preserve the more
-restrictive of model and guardrail actions.
+Default memory is local/in-process. An optional JSON file persists audit outcomes
+and mock reservations using owner-only permissions and atomic replacement.
+Mock outcomes reduce demo available balance for later events but never create
+settled history, recipient trust or automatic training samples. Tests use
+temporary storage and verify repository fixtures are unchanged.
 
-Keep the existing UI and settlement flow frozen. The optional legacy execution
-adapter wraps Mandate command submission only; existing owner approval and
-settlement continue outside the new agent. Remote inference changes no execution
-permissions. No live-execution CLI was added because live context freshness,
-authenticated approvals, and reconciliation need separate integration work.
+## Features and genuine local learning
+
+`TransactionFeatures` defines 14 ordered finite numerical inputs: amount,
+balance ratio, recipient count/frequency/average, relative recipient amount,
+overall average/relative amount, daily spend, proposed-spend budget ratio,
+new/trusted flags, optional elapsed recipient-payment time and missing-time flag.
+Empty histories and zero balances are handled without division errors. Financial
+values still use Decimal; floats are confined to numerical ML features.
+
+`LocalAnomalyModel` defines fitting and local scoring. The default
+`LocalKNNAnomalyModel` fits 128 synthetic normal vectors with seed 2048, learning
+median/IQR scaling and nearest-neighbour reference behaviour. Scores are
+normalized to [0,1] using leave-one-out reference distances and a conservative
+demo calibration factor. Unusual example score (~0.941) exceeds the normal
+example (~0.122). These are behavioural anomaly scores, not fraud probabilities.
+
+Training never reads evaluation scenarios or expected outcomes. All references
+are labelled synthetic/demo and have no fraud labels. The golden suite was used
+as regression feedback during development, so this is not a held-out statistical
+benchmark. No unsafe pickle files or trained binaries are stored. Scikit-learn
+was absent; the standard-library model runs without installation or networking.
+No optional Isolation Forest adapter was added.
+
+Risk combines the learned score monotonically with original deterministic risk
+signals. The learned model cannot lower pre-existing anomaly restrictions or
+bypass hard financial policy. Bad model output or local failures block.
 
 ## Verification
 
-| Check | Actual result |
-|---|---|
-| New suite: `python3 -m unittest discover -s tests -v` | 58 passed |
-| Post-change mandate regression | 13 passed |
-| Post-change demo UI regression | 4 passed |
-| Additional offline UI workflow test | create, small payment, approve, reject passed with HTTP forbidden |
-| Offline boundary subprocess | assessment, mock controller, all scenarios pass with sockets and legacy imports forbidden |
-| Frozen legacy diff against backup | no changes in `c8lab.py`, `python/`, `daml-starter/` |
-| CLI parse, assess, demo, eval | executed locally; EOF leaves review awaiting approval |
-| Human yes/no paths | exercised through CLI/controller tests |
+Final local validation:
 
-The first new test run found a defect in the network-blocking test fixture: it
-replaced the socket class with a function, preventing Python's SSL module from
-being imported. The fixture now preserves the class shape while rejecting socket
-creation. No legacy implementation was changed to fix this test.
+| Check | Result |
+|---|---:|
+| `python3 -m unittest discover -s tests -v` | 113 passed |
+| `python3 -m unittest python/test_mandate_client.py -v` | 13 passed |
+| `python3 -m unittest python/test_demo_ui.py -v` | 4 passed |
+| `python3 -m ai_agent.cli eval` | 33/33 actions and risk flags correct |
+| `python3 -m ai_agent.cli run-agent --source demo` | finite mock demo; review never auto-approved |
+| `python3 -m unittest tests.test_privacy -v` | local assessment/demo/stdin/eval with networking disabled |
+| `git diff --check` | clean |
 
-Golden results from actual execution: 30/30 action matches; unsafe proceed
-0/26 = 0%; human review 8/30 = 26.67%; false escalation 0/4 = 0%; policy compliance
-30/30 = 100%. Evaluation tests also verify detection of deliberately mismatched
-expectations. See `docs/EVALUATION.md` for exact definitions and limitations.
+The suite preserves financial schema, monotonic guardrail, allowlist, execution,
+legacy-boundary and UI regression coverage. Obsolete provider tests were replaced
+with deterministic parsing, local ML, state/planner, events, feedback, failure,
+memory and privacy coverage. No tests send money or use external AI networking.
+
+Computed golden metrics: scenario_count 33, action_accuracy 1.0,
+unsafe_proceed_rate 0.0, human_review_rate 0.2121212121,
+false_escalation_rate 0.0, policy_compliance_rate 1.0.
+The original 30 safety cases remain represented, with obsolete provider scripts
+replaced by local planner/malformed-input faults. Three cases add explicit
+amount-first forms and max-step failure. Illegal planner tools now hard-block.
+Metrics are computed from actual assessments, not hardcoded expected output.
+
+Privacy tests deny socket creation/connect/DNS and external-service/legacy
+imports while executing local workflows. Static checks reject network dependencies
+and obsolete inference configuration in active AI code/config. Audit contains
+public state/actions, normalized features and policy reasons, never raw history,
+credentials or hidden reasoning. No actual credentials were added or committed.
 
 ## Reproduce
 
 ```bash
-cd /Users/mamingxuan/Cantor8/AI-agent-wallet
-python3 -m ai_agent.cli parse "Pay Alice 0.1 CC for coffee"
-python3 -m ai_agent.cli assess "Pay Alice 0.05 CC for coffee"
-python3 -m ai_agent.cli assess "Pay Charlie 0.6 CC for dinner"
-python3 -m ai_agent.cli assess "Pay UnknownXYZ 0.9 CC for dinner"
-python3 -m ai_agent.cli demo
+python3 -m ai_agent.cli run-agent --source demo
+python3 -m ai_agent.cli run-agent --source stdin
+python3 -m ai_agent.cli run-agent --source demo --non-interactive
+python3 -m ai_agent.cli assess "Pay Charlie 0.6 CC for dinner" --interactive
+python3 -m ai_agent.cli model-info
 python3 -m ai_agent.cli eval
 python3 -m unittest discover -s tests -v
 python3 -m unittest python/test_mandate_client.py -v
 python3 -m unittest python/test_demo_ui.py -v
-git diff --check
+python3 -m unittest tests.test_privacy -v
 ```
 
-The original UI can still be launched independently with
-`python3 python/demo_ui.py --offline-demo`.
+The offline demo does not move real Canton Coin. `WOULD_SUBMIT` means only a mock
+handoff to the existing Daml boundary, not real authorization or settlement.
 
-## Limitations and untested functionality
+## Untested live and future work
 
-The offline AI demo does not move real Canton Coin. This is a research / portfolio
-/ hackathon-derived prototype, not production-ready financial software.
-Natural language currently uses a limited explicit Pay/Send grammar; percentages
-require clarification. The mock is not a learned model. Context is static demo
-data, category checks are literal, confidence is uncalibrated, and anomaly weights
-are illustrative. Audit records are not tamper-evident and replay prevention is
-not durable across processes. The application/operator remains a trusted boundary.
-
-Only optional remote inference requires an external LLM, endpoint, and credentials;
-its transport was tested with fakes, never with a real endpoint. Optional live
-holdings/Mandate submission requires Canton configuration, trusted identities,
-contract state, and suitable permissions. Those adapters were inspected and
-tested with fakes only. No Canton runtime, LocalNet, DevNet, live owner approval,
-or real settlement was tested. No new DevNet verification claim is made.
-
-## Recommended next steps
-
-Review and commit the extension with:
-`feat: add offline governed AI payment agent with deterministic guardrails`
-
-Demonstrate the mock CLI and explain its authority boundaries. Expand independent
-adversarial scenarios and language coverage while retaining grounding. In a
-separately provisioned environment, integrate fresh ledger history, authenticated
-human approval, durable idempotency/reconciliation, and trusted contract/party
-resolution before attempting the optional Mandate adapter. Consider UI integration
-only through an isolated adapter after those boundaries are reviewed.
+No live Canton, LocalNet, DevNet, actual signatures, live history synchronization
+or real-money transfer was run for this redesign. The separate previously tested
+legacy flow remains frozen. No production fraud-detection or readiness claim is
+made. Further work would require independent real-data validation, drift and
+false-positive calibration, trusted fresh context, authenticated human approvals,
+recipient identity mapping, encryption/retention, tamper-evident audits, durable
+event deduplication, concurrency-safe reservations, restart/resume semantics and
+reviewed settlement reconciliation. The host process remains a trusted boundary;
+privacy tests are not an OS sandbox against arbitrary malicious local code.

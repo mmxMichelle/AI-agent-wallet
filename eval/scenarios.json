@@ -869,17 +869,22 @@
         }
       ]
     },
-    "responses": [
-      "{\"type\":\"decision\",\"action\":\"PROCEED_TO_DAML\",\"confidence\":\"0.2\",\"reasons\":[\"Scripted public recommendation\"],\"policy_references\":[]}"
-    ],
     "expected_action": "REQUIRE_HUMAN_CONFIRMATION",
     "expected_risk_flags": [
       "low_confidence"
     ],
-    "rationale": "Monotonic safety preserves restrictive model advice or escalates low confidence"
+    "rationale": "Local planner restriction and confidence cannot relax deterministic guardrail",
+    "planner_decision": {
+      "action": "PROCEED_TO_DAML",
+      "confidence": "0.2",
+      "reasons": [
+        "Trusted test planner proposal"
+      ],
+      "policy_references": []
+    }
   },
   {
-    "id": "ai_review",
+    "id": "planner_review",
     "intent": {
       "recipient": "Alice",
       "amount": "0.05",
@@ -912,15 +917,20 @@
         }
       ]
     },
-    "responses": [
-      "{\"type\":\"decision\",\"action\":\"REQUIRE_HUMAN_CONFIRMATION\",\"confidence\":\"0.95\",\"reasons\":[\"Scripted public recommendation\"],\"policy_references\":[]}"
-    ],
     "expected_action": "REQUIRE_HUMAN_CONFIRMATION",
     "expected_risk_flags": [],
-    "rationale": "Monotonic safety preserves restrictive model advice or escalates low confidence"
+    "rationale": "Local planner restriction and confidence cannot relax deterministic guardrail",
+    "planner_decision": {
+      "action": "REQUIRE_HUMAN_CONFIRMATION",
+      "confidence": "0.95",
+      "reasons": [
+        "Trusted test planner proposal"
+      ],
+      "policy_references": []
+    }
   },
   {
-    "id": "ai_block",
+    "id": "planner_block",
     "intent": {
       "recipient": "Alice",
       "amount": "0.05",
@@ -953,16 +963,21 @@
         }
       ]
     },
-    "responses": [
-      "{\"type\":\"decision\",\"action\":\"BLOCK_PRE_LEDGER\",\"confidence\":\"0.95\",\"reasons\":[\"Scripted public recommendation\"],\"policy_references\":[]}"
-    ],
     "expected_action": "BLOCK_PRE_LEDGER",
     "expected_risk_flags": [],
-    "rationale": "Monotonic safety preserves restrictive model advice or escalates low confidence"
+    "rationale": "Local planner restriction and confidence cannot relax deterministic guardrail",
+    "planner_decision": {
+      "action": "BLOCK_PRE_LEDGER",
+      "confidence": "0.95",
+      "reasons": [
+        "Trusted test planner proposal"
+      ],
+      "policy_references": []
+    }
   },
   {
     "id": "malformed_json",
-    "request": "Pay Alice 0.05 CC for coffee",
+    "request": "{\"recipient\": \"Alice\", \"amount\": }",
     "context": {
       "balance": "1.0",
       "daily_spend": "0.1",
@@ -989,14 +1004,11 @@
         }
       ]
     },
-    "responses": [
-      "not JSON"
-    ],
     "expected_action": "BLOCK_PRE_LEDGER",
     "expected_risk_flags": [
       "invalid_intent"
     ],
-    "rationale": "Invalid provider output cannot become an intent"
+    "rationale": "Malformed event text cannot become a payment intent"
   },
   {
     "id": "forbidden_tool",
@@ -1032,14 +1044,12 @@
         }
       ]
     },
-    "responses": [
-      "{\"type\":\"tool\",\"name\":\"transfer\",\"arguments\":{}}"
-    ],
-    "expected_action": "REQUIRE_HUMAN_CONFIRMATION",
+    "expected_action": "BLOCK_PRE_LEDGER",
     "expected_risk_flags": [
-      "low_confidence"
+      "agent_failure"
     ],
-    "rationale": "Forbidden tool causes safe escalation"
+    "rationale": "A non-allowlisted planner action fails closed before execution",
+    "fault": "forbidden_tool"
   },
   {
     "id": "blocked_category",
@@ -1081,5 +1091,107 @@
       "blocked_category"
     ],
     "rationale": "Structured blocked category"
+  },
+  {
+    "id": "send_amount_first",
+    "request": "Send 0.05 CC to Alice for coffee",
+    "context": {
+      "balance": "1.0",
+      "daily_spend": "0.1",
+      "recent_transactions": [
+        {
+          "recipient": "Alice",
+          "amount": "0.05",
+          "currency": "CC",
+          "purpose": "coffee",
+          "category": "food",
+          "timestamp": "2026-09-30T08:00:00Z",
+          "final_decision": "PROCEED_TO_DAML",
+          "human_review": false
+        },
+        {
+          "recipient": "Alice",
+          "amount": "0.05",
+          "currency": "CC",
+          "purpose": "coffee",
+          "category": "food",
+          "timestamp": "2026-09-30T09:00:00Z",
+          "final_decision": "PROCEED_TO_DAML",
+          "human_review": false
+        }
+      ]
+    },
+    "expected_action": "PROCEED_TO_DAML",
+    "expected_risk_flags": [],
+    "rationale": "Explicit amount-first grammar"
+  },
+  {
+    "id": "transfer_amount_first",
+    "request": "Transfer 0.05 CC to Alice for coffee",
+    "context": {
+      "balance": "1.0",
+      "daily_spend": "0.1",
+      "recent_transactions": [
+        {
+          "recipient": "Alice",
+          "amount": "0.05",
+          "currency": "CC",
+          "purpose": "coffee",
+          "category": "food",
+          "timestamp": "2026-09-30T08:00:00Z",
+          "final_decision": "PROCEED_TO_DAML",
+          "human_review": false
+        },
+        {
+          "recipient": "Alice",
+          "amount": "0.05",
+          "currency": "CC",
+          "purpose": "coffee",
+          "category": "food",
+          "timestamp": "2026-09-30T09:00:00Z",
+          "final_decision": "PROCEED_TO_DAML",
+          "human_review": false
+        }
+      ]
+    },
+    "expected_action": "PROCEED_TO_DAML",
+    "expected_risk_flags": [],
+    "rationale": "Explicit amount-first grammar"
+  },
+  {
+    "id": "step_exhaustion",
+    "request": "Pay Alice 0.05 CC for coffee",
+    "context": {
+      "balance": "1.0",
+      "daily_spend": "0.1",
+      "recent_transactions": [
+        {
+          "recipient": "Alice",
+          "amount": "0.05",
+          "currency": "CC",
+          "purpose": "coffee",
+          "category": "food",
+          "timestamp": "2026-09-30T08:00:00Z",
+          "final_decision": "PROCEED_TO_DAML",
+          "human_review": false
+        },
+        {
+          "recipient": "Alice",
+          "amount": "0.05",
+          "currency": "CC",
+          "purpose": "coffee",
+          "category": "food",
+          "timestamp": "2026-09-30T09:00:00Z",
+          "final_decision": "PROCEED_TO_DAML",
+          "human_review": false
+        }
+      ]
+    },
+    "expected_action": "BLOCK_PRE_LEDGER",
+    "expected_risk_flags": [
+      "agent_failure"
+    ],
+    "rationale": "Bounded loop fails closed",
+    "max_steps": 2
   }
 ]

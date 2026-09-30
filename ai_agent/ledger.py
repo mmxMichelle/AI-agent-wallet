@@ -30,7 +30,7 @@ class MockPaymentExecutionAdapter:
 
 
 class ExecutionController:
-    """Trusted application API, not an LLM tool. Refresh preflight before handoff.
+    """Trusted application API, not a planner tool. Refresh preflight before handoff.
 
     A human yes authorizes this exact in-memory assessment only. It cannot
     override hard rules. Live adapters additionally require their own opt-in.

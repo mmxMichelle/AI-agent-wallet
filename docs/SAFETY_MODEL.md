@@ -1,120 +1,91 @@
 # Safety model
 
-This is a research / portfolio / hackathon-derived prototype. It is not
-production-ready for real financial deployment.
+This is a portfolio prototype, not production financial software. Local AI
+proposes, deterministic software enforces, humans approve when required, and
+Daml remains authoritative. No external LLM is used.
 
-Probabilistic AI proposes. Deterministic software validates. Daml remains
-authoritative. Humans remain in control when required.
+## Financial and language boundaries
 
-## Threat model and controls
+The parser requires an explicit recipient, positive Decimal amount and CC
+currency. It supports recipient-first Pay/Send and amount-first Send/Transfer
+forms with optional `for PURPOSE`. It never infers identities, percentages,
+approximate amounts or missing fields. Invalid/ambiguous text yields
+CLARIFICATION_REQUIRED and BLOCK_PRE_LEDGER before wallet-context access.
+Purpose instructions are inert text; blocked literal category terms are retained.
+Money and policy comparisons use Decimal, not model feature floats.
 
-LLM output, payment purpose, and user text are untrusted. A prompt that says
-"ignore all wallet rules" is content, not authorization. The provider can propose
-only JSON intents, read-only tool requests, and recommendations. Critical intent
-fields must match the original explicit request. Purpose text cannot be silently
-removed to hide a blocked literal category. Malformed output and missing values
-fail closed. Monetary values must be finite, bounded Decimal strings.
+The read-only allowlist remains balance, transaction history, recipient history,
+policy retrieval and risk calculation. Arguments must be exactly `{}`; intent,
+context and policy are bound by trusted application code. There are no execution,
+shell, filesystem-path, arbitrary HTTP, approve or settle tools. A malformed or
+out-of-order planner action fails closed. Local component exceptions and bounded
+step exhaustion also block; neither can trigger fallback execution.
 
-The tool registry grants least privilege: balance, transaction history, recipient
-history, policy retrieval, and risk calculation only. There are no transfer,
-settle, approve, submit, shell, arbitrary HTTP, or filesystem tools. The remote
-provider's configured inference endpoint is transport controlled by the operator,
-not an agent tool. Tool arguments cannot replace trusted context or policy.
-
-The deterministic guardrail evaluates full policy after the model finishes or
-fails. Insufficient balance, blocked category, amount above the hard maximum,
-and balance fraction above the maximum block. New recipients, daily budget,
-review threshold, high anomaly score, and low confidence cause human review.
-Invalid/nonpositive amounts fail before assessment. Threshold values are DEMO
-values, not financial advice or a replacement for the Daml Mandate.
-
-Monotonic safety is explicit:
+## Monotonic guardrail
 
 ```text
 PROCEED_TO_DAML < REQUIRE_HUMAN_CONFIRMATION < BLOCK_PRE_LEDGER
-final_action = max(ai_action, deterministic_action)
+final_action = max(planner_action, deterministic_action)
 ```
 
-An AI block is never relaxed. AI review is never automatically converted to
-proceed. A human yes cannot override a hard block. Human review binds to the
-specific in-memory assessment displayed by the CLI; absent/invalid input leaves
-it waiting. The execution controller refreshes context and reruns the guardrail.
-No agent method can call the execution controller or a payment adapter as a tool.
+The guardrail implementation and financial thresholds are unchanged. Insufficient
+balance, blocked category, hard maximum and hard balance-fraction violations
+block. Daily-budget and review-threshold violations, new recipients (according
+to policy), high anomaly score and insufficient proposal confidence require
+review unless already blocked. The learned score can only raise the prior
+weighted heuristic signal, never lower it. Low anomaly cannot excuse overspending.
 
-Daml remains authoritative for ledger authorization. Existing settlement is a
-separate Python flow; this extension does not claim atomicity between the Daml
-record and token transfer. The optional legacy adapter submits Mandate commands
-only and requires existing owner approval/settlement tooling afterward.
+The local kNN model is a behavioural anomaly detector, not a fraud probability
+estimator. It learns scaled distances from synthetic reference behaviour. It has
+no keys, signer authority or tool access. Anomaly score must be finite and in
+[0,1]; errors block. Hard policy can short-circuit unnecessary ML work.
 
-## Bounded work and audit
+## Human and execution boundaries
 
-The agent has a six-tool-call limit and bounded structured responses. Exhaustion
-or an invalid tool causes human escalation; hard policy still applies. Remote
-inference uses a finite timeout and does not follow HTTP redirects.
+Human YES can permit review to reach the controller; NO produces
+REJECTED_BY_HUMAN without submission. Invalid input/EOF leaves WAITING_FOR_HUMAN.
+Hard blocks do not prompt and cannot be overridden. Noninteractive assessment
+never submits. Event-loop low-risk events can reach explicitly configured mock
+execution autonomously.
 
-Audit records include request ID, timestamp, intent, invoked tools, policy
-references, risks, recommendation, confidence, deterministic reasons/action,
-final action, human decision, and execution result. They are emitted on stdout,
-not silently saved. Arbitrary raw responses, full message transcripts, provider
-objects, API keys, auth tokens, and hidden chain-of-thought are not logged.
-Only deterministic public reasons are emitted; model rationale stays out of the
-audit stream because arbitrary model text is not a trustworthy audit narrative.
-Request purpose is user data and can contain personal information; operators
-must control access and retention when choosing to store stdout.
+The existing controller refreshes context and deterministic preflight before any
+handoff, preserves the original restriction, and consumes successful/declined
+assessments to prevent local replay. It consumes before a potentially ambiguous
+execution result and never automatically retries. The coordinator records a
+sanitized failure requiring reconciliation if the adapter raises. The model and
+planner never invoke the adapter directly.
 
-No secrets are included in configuration. `.env.example` contains placeholders;
-the ignored `.env` file is not automatically read. External inference requires
-explicit selection through CLI or LLM_PROVIDER. No external service is required
-by the unit tests.
+Mock execution means WOULD_SUBMIT with detail "Would submit to existing Daml
+Mandate; no Canton Coin moved". Optional memory records a demo reservation for
+subsequent events, not settlement or recipient trust. Legacy execution remains
+opt-in, lazy, and absent from CLI. Existing Daml signatories/controllers,
+Mandate restrictions, human owner approval and Canton settlement are unchanged.
 
-## Model and credential independence (BYOM/BYOK)
+## Audit and privacy
 
-There is no maintainer-paid inference requirement. Users may bring a hosted API
-or a user-run local model; default mock remains offline and deterministic.
-Provider selection is centralized, with CLI > environment > defaults. Keys,
-model names, and endpoints alone never activate external inference. Unknown or
-unavailable providers fail safely and never switch to another provider.
+Transitions record from/to state, action and public reason; observations record
+state, selected action and a bounded public summary. Structured audit includes
+features, anomaly score, risk signals, policy references, final decision, human
+response and outcome. No raw history, credentials or private reasoning is logged.
+Raw exceptions are not propagated to audit records. See [privacy](PRIVACY_MODEL.md).
 
-User-owned credentials are environment-only and are sent solely to the explicitly
-configured generic API endpoint. Ollama never receives the generic API key.
-HTTP redirects and ambient proxies are disabled; non-loopback endpoints require
-HTTPS, and hosted generic endpoints also require a key. Loopback HTTP allows
-local Ollama/LM Studio use without an API key. Local compute is user-provided,
-with hardware and model availability constraints; no automatic model downloads
-or server startup occur.
+## Remaining limitations
 
-Both HTTP providers return the same bounded JSON-text interface as mock.
-Normalization rejects malformed envelopes, truncated output, vendor tool calls,
-non-JSON content, and echoed API credentials. Raw HTTP errors, bodies, endpoint
-strings, and underlying exceptions are replaced by fixed safe messages before
-reaching CLI or audit logs. No provider output is trusted by virtue of its model
-or vendor: strict parsing and schema/grounding validation still precede the
-allowlisted tool loop, risk computation, and mandatory deterministic guardrail.
-Intent failures block; recommendation failures escalate under the existing policy.
-
-All models have identical restricted privileges. Switching provider cannot
-change tools, execution permissions, human approvals, Daml controllers, or the
-legacy payment flow. Tests exercise fake transports, hostile tool requests,
-credential/error sanitization, and unchanged deterministic decisions across all
-provider modes. The original offline suite also runs with networking disabled.
-
-## Limits that remain
-
-- Python application code and operator configuration are trusted; these are not
-  process-isolation or cryptographic authorization boundaries. A malicious caller
-  with arbitrary Python access could invoke legacy code directly.
-- Demo context is static. Live history, timestamp freshness, reservations,
-  concurrency control, and multi-process durable idempotency are not implemented.
-  Controller replay protection is only within one instance.
-- Recipient strings are not verified identities. Live mapping must be supplied
-  by trusted setup. No automatic fuzzy party lookup is performed.
-- Category blocking matches supplied categories and literal purpose tokens;
-  obfuscation, euphemisms, and unknown prohibited activities need further controls.
-- The weighted anomaly score is a behavioural indicator, not validated fraud
-  detection. Confidence is model-supplied and not calibrated.
-- Audit JSON is not tamper-evident. Human input is a local demo prompt, not an
-  authenticated production approval service.
-- The language grammar is intentionally limited. Percentages and missing values
-  require explicit clarification instead of model inference.
-- Mock evaluation cannot establish remote-model reliability or Canton safety.
-  No live LLM, LocalNet, DevNet, or real Canton Coin transfer was tested.
+- The host process, local policy, input context, model and planner implementations
+  are trusted code, not an adversarial process-isolation boundary.
+- The grammar is intentionally narrow. Recipient names are not authenticated
+  identities; blocked-category matching is literal, not semantic understanding.
+- Demo thresholds, synthetic kNN training and calibration are not validated for
+  production fraud detection. Novel legitimate transactions may be escalated.
+- Elapsed-time features require explicit valid timestamps and are missing in
+  default assessments. No live history synchronization or online retraining.
+- JSON memory is a single-process demo store. No distributed locking, durable
+  event deduplication, multi-process reservations, or crash-proof reconciliation.
+- Repeated mock reservations do not create real holdings or settled history.
+  Unanswered reviews are recorded but have no cross-process resume API.
+- Human input is a terminal response, not authenticated consent. Audits are not
+  tamper-evident or encrypted. Model inference adds no ledger authority.
+- Execution preflight refreshes deterministic policy/context; it does not rerun
+  ML. Prior ML restriction remains binding. Production needs explicit freshness.
+- No LocalNet, DevNet, live Canton, owner-signature or real-money integration was
+  run during this redesign. Existing non-atomic settlement semantics are intact.

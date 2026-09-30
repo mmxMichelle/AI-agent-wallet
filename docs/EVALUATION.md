@@ -1,75 +1,67 @@
-# Offline evaluation
-
-Run from the repository root:
+# Local offline evaluation
 
 ```bash
 python3 -m ai_agent.cli eval
 python3 -m unittest discover -s tests -v
 ```
 
-`eval/scenarios.json` contains 30 deterministic golden scenarios. Every entry
-has an ID, request or structured intent, explicit wallet-context fixture,
-expected action, expected relevant risk flags, and rationale. Optional scripted
-provider responses exercise malformed JSON, low confidence, restrictive model
-recommendations, and forbidden tools. Structured-intent cases skip parsing;
-request cases pass through the real parser. Both execute the actual orchestrator,
-risk calculation, and deterministic guardrail. Evaluation never executes payments.
+`eval/scenarios.json` contains 33 deterministic scenarios, preserving all 30
+previous safety cases and adding amount-first parsing and step exhaustion.
+Obsolete response-script cases now inject trusted local planner proposals/faults
+or malformed input. The forbidden-action case now expects a hard block, a
+stricter outcome. No financial-policy expectation was loosened.
 
-Categories include known/new recipients, usual/unusual amounts, zero/negative
-amounts, missing/ambiguous fields, unsupported currency, insufficient funds,
-hard maximum, exact threshold boundaries, daily spending, blocked categories,
-prompt injection, percentage clarification, low confidence, and malformed output.
-Separate unit tests exercise step exhaustion, all monotonic combinations, human
-yes/no/wait, replay prevention, refreshed context, and the execution boundary.
+Every scenario runs the actual local agent, parser (unless already structured),
+context tools, applicable feature/model work, risk engine, planner and guardrail.
+Hard blocks intentionally skip unnecessary ML/history work. Evaluation does not
+execute payments. A shared model is fitted solely from 128 separately generated
+synthetic normal reference vectors (seed 2048), never golden requests, expected
+actions or scenario histories. Reference identities differ from golden names.
 
-Actions mean:
+Coverage includes known/new recipients, normal/unusual amounts, invalid money,
+missing/ambiguous fields, percentage requests, unsupported currency, insufficient
+funds, hard maximum, exact boundaries, daily spend, blocked category, instruction
+text, restrictive planner proposals, low confidence, illegal tools and budgets.
+Tests additionally verify human approval/rejection/waiting, monotonicity, replay,
+fresh preflight, event feedback, local storage isolation and disabled sockets.
 
-- `PROCEED_TO_DAML`: eligible for the explicit controller; not settlement success.
-- `REQUIRE_HUMAN_CONFIRMATION`: wait for explicit human input before any submission.
-- `BLOCK_PRE_LEDGER`: do not invoke execution; includes invalid-intent cases.
+## Computed results
 
-## Metrics and measured results
-
-Measured locally on 2026-09-30 by executing this suite:
+Measured locally on 2026-09-30:
 
 | Metric | Definition | Result |
 |---|---|---:|
-| action_accuracy | Exact action matches / all scenarios | 30/30 = 100% |
-| unsafe_proceed_rate | Actual proceed among expected review/block / expected review/block cases | 0/26 = 0% |
-| human_review_rate | Actual review / all scenarios | 8/30 = 26.67% |
-| false_escalation_rate | Actual review/block among expected proceed / expected proceed cases | 0/4 = 0% |
-| policy_compliance_rate | Actual action at least as restrictive as expected AND expected flags present / all scenarios | 30/30 = 100% |
+| scenario_count | All actual scenario runs | 33 |
+| action_accuracy | Exact action matches / all scenarios | 33/33 = 100% |
+| unsafe_proceed_rate | Actual proceed among expected review/block / expected review/block | 0/27 = 0% |
+| human_review_rate | Actual review / all scenarios | 7/33 = 21.21% |
+| false_escalation_rate | Actual review/block among expected proceed / expected proceed | 0/6 = 0% |
+| policy_compliance_rate | At least expected restriction AND required flags present / all scenarios | 33/33 = 100% |
 
-UNSAFE_PROCEED_RATE is the primary metric: expected action is review or block,
-but system output is proceed. It does not count an expected block downgraded to
-review; action accuracy and policy compliance expose that distinct failure.
-Empty metric subgroups return zero; an empty overall suite is rejected.
-The CLI exits nonzero if any action or expected risk-flag check fails.
+Unsafe proceed rate is primary. An expected block downgraded to review is exposed
+by action accuracy/compliance, even though it is not a proceed. Empty subgroups
+return zero; an empty suite is rejected. Metrics are computed from actual runs;
+unit tests alter expected actions to confirm failures are counted. CLI exits
+nonzero for action or risk-flag mismatches.
 
-These metrics are calculated from actual results, not hardcoded in the evaluator.
-Tests intentionally change golden expectations to verify that unsafe proceed,
-false escalation, and compliance failures are counted. A separate subprocess
-forbids socket creation and legacy imports while evaluating all scenarios.
+`local_anomaly` also reports actual normal/unusual scores and their ordering.
+The demo normal transaction scores about 0.122; the unusual new-recipient amount
+scores about 0.941. These are learned distance scores, not fraud probabilities.
+Model tests separately verify fitting, determinism, reference dependence, bounded
+scores, empty/zero context handling and operation without sockets.
 
-## Extending the suite
+## Extending and interpreting
 
-Copy a scenario, give it a unique ID, and independently specify the expected
-action and relevant flags. Use decimal strings for all monetary values. Supply
-balance and accumulated daily spend explicitly, plus timestamped transaction
-history for behavioural comparisons. Explain the policy reason in `rationale`.
-For protocol failures, add deterministic `responses`; those are consumed in order,
-including the parser call when the scenario uses a request string.
+Add unique scenario IDs, explicit decimal-valued context, expected policy action,
+required risk flags and a rationale. Trusted evaluation-only `planner_decision`
+and `fault` inputs exercise failure/restriction boundaries; they are not accepted
+by event sources. Keep reference data separate, and do not lower safety
+expectations merely to improve metrics.
 
-Run the suite and inspect per-scenario output. Change implementation when it
-violates policy; do not loosen expected actions to make the numbers look better.
-After legitimate policy changes, review expectations and update measured results
-in this document and README from a fresh execution.
-
-## Limits
-
-This is a small synthetic, policy-derived suite, not independent held-out data.
-The mock is a deterministic grammar/tool-plan test double, not a learned model.
-Perfect fixture accuracy does not demonstrate general language understanding,
-prompt-injection immunity against every input, or safe real-world deployment.
-Daily-spend cases use accumulated fixtures, not live history synchronization.
-No remote inference, ledger writes, live Daml runtime, or settlement occurs here.
+These are small synthetic portfolio fixtures, not independent production data or
+generic AI accuracy. The kNN normalization factor was conservatively calibrated
+during development; the golden suite is regression coverage, not a held-out ML
+benchmark. Training never reads it, but development-time calibration limits any
+statistical generalization claim. Production work needs independently collected
+history, held-out evaluation, drift analysis and false-positive calibration.
+No network, ledger writes, live Daml or settlement occurs in evaluation.
