@@ -3,6 +3,161 @@
 https://github.com/user-attachments/assets/6bea3491-8094-4818-9d60-55a0e4ee22c9
 
 # GuardRail Wallet
+## Privacy-Preserving Autonomous AI Payment Agent
+
+GuardRail Wallet is a local-first autonomous payment agent combining deterministic
+payment-intent parsing, an observe-plan-act loop, transaction-context analysis,
+local unsupervised anomaly detection, deterministic financial guardrails,
+human-in-the-loop escalation, and existing Daml/Canton execution controls.
+
+**No wallet data is sent to an external AI provider.** No external LLM is used.
+All assessment, features, learning, planning, and audit processing stay local.
+This is a portfolio prototype, not production financial software or a validated
+fraud detector. **The offline demo does not move real Canton Coin.**
+
+Observe locally. Learn locally. Plan locally. Enforce deterministically.
+Escalate to humans when required. Keep payment authority outside the AI.
+
+```text
+Payment Event
+    |
+    v
+Local Parser
+    |
+    v
+Autonomous State Machine
+    |
+    +--> Balance
+    +--> Recipient / Transaction History
+    +--> Local Policy
+    |
+    v
+Feature Engineering
+    |
+    v
+Local ML Anomaly Model
+    |
+    v
+Risk Engine
+    |
+    v
+Autonomous Planner
+    |
+    v
+Deterministic Guardrail
+   /        |        \
+BLOCK     HUMAN     PROCEED
+                      |
+                      v
+                Daml Boundary
+                      |
+                      v
+          Existing Canton Settlement
+```
+
+### Run locally
+
+Python 3.10+ and the standard library are sufficient. No downloads, API keys,
+model servers, or Canton runtime are required for these commands:
+
+```bash
+python3 -m ai_agent.cli assess "Pay Alice 0.05 CC for coffee"
+python3 -m ai_agent.cli assess "Pay Charlie 0.6 CC for dinner" --interactive
+python3 -m ai_agent.cli run-agent --source demo
+python3 -m ai_agent.cli run-agent --source stdin
+python3 -m ai_agent.cli model-info
+python3 -m ai_agent.cli eval
+```
+
+The demo is finite. Low-risk events can reach the mock execution controller
+without a prompt. Review pauses in `WAITING_FOR_HUMAN`: `yes` permits a guarded
+mock submission; `no` produces `REJECTED_BY_HUMAN`; EOF, blank, or an unknown
+answer leaves it waiting without execution. Hard blocks never ask for approval.
+For noninteractive demonstrations use:
+
+```bash
+python3 -m ai_agent.cli run-agent --source demo --non-interactive --max-events 3 --max-steps 20
+```
+
+Local JSONL input has one `{"request": "Pay Alice 0.05 CC for coffee"}` per line:
+
+```bash
+python3 -m ai_agent.cli run-agent --source jsonl --file /path/to/events.jsonl --memory /path/to/local-demo-memory.json
+```
+
+Memory is optional, local, and sensitive. Each completed mock handoff reserves
+its amount in demo memory for subsequent events; this is **not settlement** and
+does not manufacture recipient history or retrain on unverified transactions.
+Use a fresh memory file for a fresh demo. Fixtures are read-only. Audit output is
+printed locally; an explicitly selected memory file retains outcomes using JSON
+and owner-only file permissions. No memory file is created by default.
+
+### Why no LLM?
+
+This financial-agent design prioritizes confidentiality, deterministic behaviour,
+auditability, reproducibility, and fail-closed semantics over unrestricted
+natural-language reasoning. An agent is perception/context + memory + tools +
+local learning + planning + state + guarded action + outcome feedback.
+
+The planner inspects missing observations on each iteration, selects an allowed
+local action, observes its result, and updates state. Invalid intent stops before
+wallet-context access. Cached observations are not fetched again. Hard policy
+blocks skip unnecessary history tools and anomaly inference. A step budget
+prevents unbounded work. Execution is outside the model and tool registry.
+
+Supported explicit grammar (case-insensitive verbs/currency):
+
+- `Pay Alice 0.1 CC for coffee`
+- `Send Alice 0.1 CC for coffee`
+- `Send 0.1 CC to Alice for coffee`
+- `Transfer 0.1 CC to Alice for coffee`
+- `Pay Alice 0.1 CC`
+
+Names are explicit ASCII identifiers (multiword names allowed). Money uses
+Decimal. The parser preserves purpose text. Percentages, missing currency,
+approximate amounts, alternatives, and inferred recipients produce
+`CLARIFICATION_REQUIRED` and block before execution. It never guesses.
+
+### Local learning and safety
+
+`LocalKNNAnomalyModel` fits 128 deterministic synthetic normal reference vectors
+(seed 2048), separate from the golden scenarios. It uses robust feature scaling
+and nearest-neighbour distances to produce a behavioural anomaly score in [0,1].
+No fraud labels, trained binary artifacts, or unsafe pickle files are used.
+Scikit-learn is not installed or required; no optional adapter is active.
+
+Fourteen features describe amount, balance ratio, recipient count/frequency,
+recipient/overall averages and relative amounts, daily spend and budget ratio,
+new/trusted status, and optional time since last recipient payment with a missing
+indicator. Numerical ML features use floats; financial policy still uses Decimal.
+
+The learned score can only add restriction to existing deterministic risk signals.
+Insufficient balance, hard caps, balance-fraction limits, and blocked categories
+remain hard blocks. The final decision is the more restrictive of planner proposal
+and guardrail. Human approval cannot override a hard block. Canton authority and
+existing settlement semantics are unchanged; there is no live execution CLI.
+
+### Validation and limits
+
+The local test suite covers parser ambiguity, model fitting/determinism, feature
+edge cases, adaptive planning, state transitions, finite events, memory isolation,
+human decisions, guardrails, and privacy with socket networking disabled.
+The original 13 mandate and 4 UI regressions remain required. The 33-scenario
+golden suite reports computed action accuracy, unsafe proceed rate, human review
+rate, false escalation rate, and policy compliance; these are fixture metrics,
+not general AI accuracy or real-money validation.
+
+Read [architecture](docs/AI_AGENT_ARCHITECTURE.md), [privacy](docs/PRIVACY_MODEL.md),
+[safety](docs/SAFETY_MODEL.md), [evaluation](docs/EVALUATION.md), and the
+[implementation report](IMPLEMENTATION_REPORT.md). No live Canton, DevNet, or
+real-money transfer was run for this redesign. The existing live wallet layer
+below is separate from the fully local AI demo.
+
+## Legacy Daml/Canton wallet (frozen)
+
+The following documentation describes the previously tested wallet. Its code,
+contracts, signing authority, and settlement commands were not changed by the
+local-agent extension. Canton networking requires explicit legacy execution.
 
 GuardRail Wallet is a Canton / Daml demo that shows how an autonomous agent can
 request payments, get human approval when needed, and settle on real Canton Coin

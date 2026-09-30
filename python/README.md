@@ -7,6 +7,7 @@ demo work on real DevNet:
   and `TransactionRecord` activity in real time.
 - `mandate_client.py` creates Mandate proposals, approves or rejects high-value
   payments, and settles approved payments through the existing Cantor8 toolkit.
+- `demo_ui.py` provides the one-page browser demo for the final presentation.
 
 The goal is simple:
 
@@ -85,6 +86,12 @@ python3 python/mandate_client.py settle \
   --from-party <SPENDER> \
   --to-party <RECIPIENT> \
   --amount 0.50
+```
+
+## Run the UI
+
+```bash
+python3 python/demo_ui.py --host 127.0.0.1 --port 8080
 ```
 
 ## How it works

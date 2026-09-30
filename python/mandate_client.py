@@ -98,6 +98,27 @@ def request_high_value_command(
     }
 
 
+def charge_command(
+    mandate_cid: str,
+    amount: str | float | int,
+    recipient: str,
+    purpose: str,
+    package_ref: str = DEFAULT_PACKAGE_REF,
+) -> dict[str, Any]:
+    return {
+        "ExerciseCommand": {
+            "templateId": mandate_template_id("Mandate", package_ref=package_ref),
+            "contractId": mandate_cid,
+            "choice": "Charge",
+            "choiceArgument": {
+                "amount": str(amount),
+                "recipient": recipient,
+                "purpose": purpose,
+            },
+        }
+    }
+
+
 def approve_command(
     pending_cid: str,
     package_ref: str = DEFAULT_PACKAGE_REF,
@@ -178,6 +199,37 @@ def _find_created_contract_ids(node: Any) -> list[str]:
     for value in node.values():
         found.extend(_find_created_contract_ids(value))
     return found
+
+
+def extract_created_events(node: Any) -> list[dict[str, str]]:
+    events: list[dict[str, str]] = []
+    if isinstance(node, list):
+        for item in node:
+            events.extend(extract_created_events(item))
+        return events
+    if not isinstance(node, dict):
+        return events
+
+    created = None
+    for key in ("CreatedTreeEvent", "CreatedEvent", "createdEvent", "created_event"):
+        if key in node:
+            created = node[key]
+            break
+    if isinstance(created, dict):
+        payload: Any = created
+        while isinstance(payload, dict) and isinstance(payload.get("value"), dict):
+            payload = payload["value"]
+        template_id = payload.get("templateId") or payload.get("template_id")
+        contract_id = payload.get("contractId") or payload.get("contract_id")
+        if template_id or contract_id:
+            events.append({
+                "templateId": str(template_id or ""),
+                "contractId": str(contract_id or ""),
+            })
+
+    for value in node.values():
+        events.extend(extract_created_events(value))
+    return events
 
 
 def _extract_created_contract_id(response: dict[str, Any], template_suffix: str) -> Optional[str]:
