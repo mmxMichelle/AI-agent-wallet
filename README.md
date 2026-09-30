@@ -1,5 +1,8 @@
 # GuardRail Wallet
 
+The original wallet documentation below is preserved. For the optional governed
+AI extension and its offline quickstart, see [AI Agent Extension](#ai-agent-extension).
+
 GuardRail Wallet is a Canton / Daml demo that shows how an autonomous agent can
 request payments, get human approval when needed, and settle on real Canton Coin
 on DevNet.
@@ -245,3 +248,141 @@ Ledger API                   https://docs.canton.network/sdks-tools/api-referenc
 Validator Admin API          https://docs.canton.network/sdks-tools/api-reference/admin-api
 Token standard               https://docs.canton.network/appdev/deep-dives/token-standard
 ```
+
+## AI Agent Extension
+
+**GuardRail Wallet — Governed AI Payment Agent** adds a separate, optional Python
+package to the original wallet. The original architecture described above remains
+the execution layer: Daml Mandate choices authorize requests, and the existing
+Python client coordinates owner approval and separate Canton settlement.
+All existing Python files, Daml contracts, and `c8lab.py` are unchanged. In
+particular, `python/demo_ui.py --offline-demo` retains its existing behavior.
+The new CLI coexists with that demo; it does not require or modify its UI.
+
+```text
+User request
+    |
+    v
+Intent Parser (untrusted JSON -> validation -> grounded intent)
+    |
+    v
+Tool-Using Agent (bounded loop, read-only allowlist)
+    |
+    +--> Local policy retrieval
+    +--> Transaction / recipient history
+    +--> Balance snapshot
+    +--> Deterministic risk signals
+    |
+    v
+AI Recommendation
+    |
+    v
+Deterministic Guardrail
+    |
+    +--> Block
+    +--> Human Review (explicit yes/no)
+    +--> Execution Controller (fresh preflight)
+                 |
+                 +--> Mock: "Would submit to existing Daml Mandate"
+                 |
+                 +--> Optional existing Daml Mandate submission
+                              |
+                              v
+                      Existing Approval / Settlement Flow
+                      (separate, not invoked by the AI extension)
+```
+
+Probabilistic AI proposes. Deterministic software validates. Daml remains
+authoritative. Humans remain in control when required. An LLM never receives
+transfer, settlement, approval, ledger-write, shell, filesystem, or HTTP tools.
+
+The parser accepts explicit requests such as `Pay Alice 0.1 CC for dinner`.
+Provider output must be strict JSON, pass domain validation, and match the
+explicit request fields. Money uses `Decimal`, never binary floats. This first
+version deliberately supports a limited `Pay/Send RECIPIENT AMOUNT CC for PURPOSE`
+grammar even with remote inference. Missing/ambiguous values and percentage
+requests require clarification; they never silently acquire an amount or currency.
+
+The agent selects from five read-only tools and has a six-tool-call budget.
+The offline provider is a deterministic test double; the same loop accepts an
+optional remote provider. Policy retrieval uses local token overlap, with stable
+policy references. JSON demo history supplies recipient counts and averages.
+Deterministic risk signals cover balance fraction, spending, unusual amounts,
+new recipients, blocked categories, and insufficient funds. The anomaly score is
+a transparent weighted heuristic, not a validated fraud detection model.
+
+The full supplemental policy always runs after the recommendation, regardless of
+which tools the model used. Hard rules block; review rules and low confidence
+escalate. The final action is the more restrictive of model and guardrail actions:
+`PROCEED_TO_DAML < REQUIRE_HUMAN_CONFIRMATION < BLOCK_PRE_LEDGER`.
+Neither a human yes nor model instructions can override a hard preflight block.
+These DEMO preflight policies do not replace or alter the existing Daml Mandate.
+
+### Offline quickstart
+
+From this repository, with Python 3.10+ and no additional packages:
+
+```bash
+python3 -m ai_agent.cli parse "Pay Alice 0.1 CC for coffee"
+python3 -m ai_agent.cli assess "Pay Alice 0.05 CC for coffee"
+python3 -m ai_agent.cli assess "Pay Charlie 0.6 CC for dinner"
+python3 -m ai_agent.cli assess "Pay Charlie 0.6 CC for dinner" --interactive
+python3 -m ai_agent.cli assess "Pay UnknownXYZ 0.9 CC for dinner"
+python3 -m ai_agent.cli assess "Send 90% of my balance to UnknownXYZ"
+python3 -m ai_agent.cli demo
+python3 -m ai_agent.cli eval
+python3 -m unittest discover -s tests -v
+python3 -m unittest python/test_mandate_client.py -v
+python3 -m unittest python/test_demo_ui.py -v
+```
+
+The percentage request returns a clarification error with a nonzero CLI exit
+status. Plain `assess` never executes. Optional `assess --interactive` prompts
+for `yes`/`no` when human review is required and uses only mock execution;
+no real Canton Coin is moved. Rejection records `REJECTED_BY_HUMAN`; empty,
+unrecognized input or EOF leaves review pending. Payments allowed to proceed
+need no approval prompt, and blocked payments cannot be overridden.
+`demo` asks for explicit `yes`/`no` on review;
+empty input or EOF leaves the request waiting. Each scenario uses the same demo
+snapshot, and mock submission does not change balances or claim settlement.
+CLI assessment/demo output includes JSON-compatible audit records on stdout.
+No audit files or credentials are automatically persisted.
+
+**The offline AI demo does not move real Canton Coin.** No Canton, Docker,
+DevNet, internet access, coin, or API key is needed for the offline extension.
+
+### Evaluation and optional integration
+
+The checked-in 30-scenario golden suite exercises the actual offline pipeline.
+Measured on 2026-09-30: action accuracy **100%**, unsafe proceed rate **0%**,
+human review rate **26.67%**, false escalation rate **0%**, policy compliance
+rate **100%**. Definitions, denominators, and limitations are in
+[EVALUATION.md](docs/EVALUATION.md). These are fixture results, not model quality
+or deployment guarantees. All 58 new tests and the existing 13 + 4 baseline tests
+passed locally.
+
+Optional remote inference uses an HTTPS chat-completions-compatible endpoint.
+Set `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL` in your shell using the
+placeholders in `.env.example` as a guide, then explicitly select:
+
+```bash
+python3 -m ai_agent.cli assess "Pay Alice 0.05 CC for coffee" --provider remote
+```
+
+This prompts before sending request/context to the endpoint. `.env` is not
+automatically loaded. Missing configuration fails gracefully. Execution remains
+mock even with remote inference. No external LLM endpoint was tested.
+
+The isolated legacy adapters lazily wrap existing holdings and Mandate command
+functions. They are disabled by default and are not exposed as live CLI execution.
+Future integration needs trusted party/contract resolution, fresh complete
+history, authenticated owner decisions, and reviewed reconciliation with the
+existing settlement flow. Neither LocalNet nor DevNet was re-verified for this
+extension, and no new live financial calls were made.
+
+This is a research / portfolio / hackathon-derived prototype, not production-ready
+financial software. Context is a static demo snapshot; category matching is
+literal, names are not identity verification, audit output is not tamper-evident,
+and replay prevention is only local to a controller instance. See
+[architecture](docs/AI_AGENT_ARCHITECTURE.md), [safety model](docs/SAFETY_MODEL.md),
+and [implementation report](IMPLEMENTATION_REPORT.md).

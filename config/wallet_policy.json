@@ -1,0 +1,13 @@
+{
+  "label": "DEMO supplemental preflight policy; not a Daml Mandate",
+  "supported_currency": "CC",
+  "daily_budget": "1.0",
+  "ai_review_threshold": "0.2",
+  "hard_preflight_maximum": "2.0",
+  "maximum_balance_fraction": "0.8",
+  "new_recipient_requires_review": true,
+  "trusted_recipients": ["Alice"],
+  "blocked_categories": ["gambling", "prohibited"],
+  "anomaly_review_threshold": "0.6",
+  "low_confidence_threshold": "0.7"
+}

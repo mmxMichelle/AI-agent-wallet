@@ -1,0 +1,8 @@
+{
+  "balance": "1.0",
+  "daily_spend": "0.1",
+  "recent_transactions": [
+    {"recipient":"Alice","amount":"0.05","currency":"CC","purpose":"coffee","category":"food","timestamp":"2026-09-30T08:00:00Z","final_decision":"PROCEED_TO_DAML","human_review":false},
+    {"recipient":"Alice","amount":"0.05","currency":"CC","purpose":"coffee","category":"food","timestamp":"2026-09-30T09:00:00Z","final_decision":"PROCEED_TO_DAML","human_review":false}
+  ]
+}
