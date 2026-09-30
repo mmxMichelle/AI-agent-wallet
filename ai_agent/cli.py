@@ -2,7 +2,9 @@
 import argparse
 import json
 from .models import Action, ValidationError, jsonable
-from .providers import MockLLMProvider, OpenAICompatibleProvider, ProviderError
+from .providers import create_provider, PROVIDER_HELP, ProviderError
+# Retained import for existing callers/tests; selection lives only in create_provider.
+from .providers import OpenAICompatibleProvider
 from .parser import parse_intent
 from .orchestrator import GovernedAgent
 from .ledger import ExecutionController, ExecutionResult, MockPaymentExecutionAdapter
@@ -46,21 +48,21 @@ def main(argv=None) -> int:
         if name == 'assess':
             command.add_argument('--interactive', action='store_true',
                                  help='review payments interactively with mock execution only; no real Canton Coin moved')
-        command.add_argument('--provider', choices=('mock', 'remote'), default='mock',
-                             help='remote sends request/context to an external LLM; execution stays mock')
+        command.add_argument('--provider', help='mock, openai-compatible, or ollama; defaults to LLM_PROVIDER or mock')
+        command.add_argument('--model', help='user-chosen model; overrides provider environment variable')
+        command.add_argument('--base-url', help='inference endpoint; overrides provider environment variable')
     sub.add_parser('eval')
+    sub.add_parser('providers')
     args = parser.parse_args(argv)
     try:
+        if args.command == 'providers':
+            print(PROVIDER_HELP)
+            return 0
         if args.command == 'eval':
             result = evaluate()
             print(json.dumps(result, indent=2))
             return 0 if all(r['correct'] and r['risk_flags_match'] for r in result['results']) else 1
-        provider = MockLLMProvider()
-        if args.provider == 'remote':
-            print('WARNING: request and demo context will be sent to your external LLM. Payments remain mock.')
-            if input('Continue with remote inference? [yes/no] ').strip().lower() != 'yes':
-                return 1
-            provider = OpenAICompatibleProvider()
+        provider = create_provider(args.provider, model=args.model, base_url=args.base_url)
         if args.command == 'parse':
             print(json.dumps(jsonable(parse_intent(args.request, provider)), indent=2))
             return 0

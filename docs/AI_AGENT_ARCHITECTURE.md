@@ -40,7 +40,7 @@ Trusted context snapshot + full policy ------------+----+
 | Module | Responsibility |
 |---|---|
 | `models.py` | Frozen dataclasses, actions, Decimal validation, strict JSON |
-| `providers.py` | Provider Protocol, deterministic mock, optional HTTPS transport |
+| `providers.py` | Provider Protocol, central factory, mock, OpenAI-compatible and Ollama transports |
 | `parser.py` | Validate output and ground recipient/amount/currency/purpose in request |
 | `memory.py` | Context Protocol and JSON snapshot repository |
 | `policy.py`, `retrieval.py` | Validated DEMO thresholds and stable token overlap retrieval |
@@ -110,12 +110,44 @@ wallet adapter obtains unlocked Amulet holdings through `c8lab.holdings`; histor
 and daily spend must be supplied by the trusted caller. That incomplete live
 context integration is one reason no live execution CLI is provided.
 
-## Mock versus remote/live
+## Bring Your Own Model / Bring Your Own Key
 
-Default mock mode is deterministic and fully offline. Remote inference is
-explicit and optional, with a warning and confirmation in the CLI. It changes
-only the provider, not execution authority. Remote requests have a timeout,
-response-size limit, HTTPS requirement, and disabled redirects.
+GuardRail Wallet has no maintainer-paid inference requirement. Users own their
+credentials and explicitly choose `mock`, `openai-compatible`, or `ollama`.
+The default remains offline, deterministic mock; model/key/endpoint presence
+alone never selects an external provider. Evaluation always uses mock.
+
+`providers.create_provider(provider_name=None, model=None, base_url=None)` is
+the central selection/configuration layer. CLI arguments override environment
+variables, which override safe defaults. `LLM_PROVIDER` defaults to `mock`.
+Generic APIs use `LLM_BASE_URL`, `LLM_MODEL`, and environment-only `LLM_API_KEY`.
+Ollama uses `OLLAMA_BASE_URL` (default `http://localhost:11434`) and
+`OLLAMA_MODEL`, and never forwards `LLM_API_KEY`. There is no default model.
+No secrets belong in config files; `.env.example` is reference-only and `.env`
+is ignored, not automatically loaded. No vendor SDK or paid dependency is added.
+
+The existing `LLMProvider.complete(messages) -> str` Protocol is preserved.
+Both HTTP adapters normalize their vendor envelope into bounded JSON text before
+it reaches the agent. The provider rejects malformed envelopes, incomplete
+responses, vendor tool calls, and non-JSON content. Strict downstream schema
+validation, grounding, tool allowlisting, risk computation, and deterministic
+guardrails still run. Parser, orchestrator, tools, and guardrail require no
+provider-specific logic. All models have identical restricted privileges.
+
+OpenAI-compatible mode supports hosted APIs and user-run local servers such as
+LM Studio. Ollama uses `/api/chat` with JSON format and streaming disabled.
+Local models can avoid hosted API charges but require user-provided compute,
+model availability, and appropriate hardware. Nothing starts servers, installs
+software, or downloads weights automatically.
+
+CLI provider/environment selection is explicit opt-in to sending context; no
+provider is autodetected and failures never fall back. Network requests have a
+20-second socket timeout, 64-KiB response envelope limit, 10,000-character content
+limit, disabled redirects/proxies, and HTTPS except for explicit loopback hosts.
+Generic non-loopback endpoints require a user API key; local compatible servers
+may omit it. Transport/error bodies are not surfaced. Provider failure at intent
+parsing blocks; failure during recommendations triggers existing human escalation,
+with hard deterministic blocks still enforced. Execution authority is unchanged.
 
 Live Canton adapters require separate explicit construction/enablement; importing
 them does not import the legacy runtime. Tests use fake runtime functions and a

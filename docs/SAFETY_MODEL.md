@@ -64,8 +64,39 @@ must control access and retention when choosing to store stdout.
 
 No secrets are included in configuration. `.env.example` contains placeholders;
 the ignored `.env` file is not automatically read. External inference requires
-explicit provider selection and confirmation. No external service is required
+explicit selection through CLI or LLM_PROVIDER. No external service is required
 by the unit tests.
+
+## Model and credential independence (BYOM/BYOK)
+
+There is no maintainer-paid inference requirement. Users may bring a hosted API
+or a user-run local model; default mock remains offline and deterministic.
+Provider selection is centralized, with CLI > environment > defaults. Keys,
+model names, and endpoints alone never activate external inference. Unknown or
+unavailable providers fail safely and never switch to another provider.
+
+User-owned credentials are environment-only and are sent solely to the explicitly
+configured generic API endpoint. Ollama never receives the generic API key.
+HTTP redirects and ambient proxies are disabled; non-loopback endpoints require
+HTTPS, and hosted generic endpoints also require a key. Loopback HTTP allows
+local Ollama/LM Studio use without an API key. Local compute is user-provided,
+with hardware and model availability constraints; no automatic model downloads
+or server startup occur.
+
+Both HTTP providers return the same bounded JSON-text interface as mock.
+Normalization rejects malformed envelopes, truncated output, vendor tool calls,
+non-JSON content, and echoed API credentials. Raw HTTP errors, bodies, endpoint
+strings, and underlying exceptions are replaced by fixed safe messages before
+reaching CLI or audit logs. No provider output is trusted by virtue of its model
+or vendor: strict parsing and schema/grounding validation still precede the
+allowlisted tool loop, risk computation, and mandatory deterministic guardrail.
+Intent failures block; recommendation failures escalate under the existing policy.
+
+All models have identical restricted privileges. Switching provider cannot
+change tools, execution permissions, human approvals, Daml controllers, or the
+legacy payment flow. Tests exercise fake transports, hostile tool requests,
+credential/error sanitization, and unchanged deterministic decisions across all
+provider modes. The original offline suite also runs with networking disabled.
 
 ## Limits that remain
 

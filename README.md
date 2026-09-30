@@ -358,20 +358,9 @@ Measured on 2026-09-30: action accuracy **100%**, unsafe proceed rate **0%**,
 human review rate **26.67%**, false escalation rate **0%**, policy compliance
 rate **100%**. Definitions, denominators, and limitations are in
 [EVALUATION.md](docs/EVALUATION.md). These are fixture results, not model quality
-or deployment guarantees. All 58 new tests and the existing 13 + 4 baseline tests
-passed locally.
-
-Optional remote inference uses an HTTPS chat-completions-compatible endpoint.
-Set `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL` in your shell using the
-placeholders in `.env.example` as a guide, then explicitly select:
-
-```bash
-python3 -m ai_agent.cli assess "Pay Alice 0.05 CC for coffee" --provider remote
-```
-
-This prompts before sending request/context to the endpoint. `.env` is not
-automatically loaded. Missing configuration fails gracefully. Execution remains
-mock even with remote inference. No external LLM endpoint was tested.
+or deployment guarantees. All 85 AI tests (65 existing plus 20 provider tests), 13 mandate tests, and
+4 demo UI tests passed locally. The original AI suite also passes with networking
+disabled; HTTP provider tests use fake transports.
 
 The isolated legacy adapters lazily wrap existing holdings and Mandate command
 functions. They are disabled by default and are not exposed as live CLI execution.
@@ -386,3 +375,120 @@ literal, names are not identity verification, audit output is not tamper-evident
 and replay prevention is only local to a controller instance. See
 [architecture](docs/AI_AGENT_ARCHITECTURE.md), [safety model](docs/SAFETY_MODEL.md),
 and [implementation report](IMPLEMENTATION_REPORT.md).
+
+
+## Choose Your LLM
+
+GuardRail Wallet is model-agnostic. It runs fully offline with a deterministic
+mock provider by default and allows users to bring their own hosted or local
+LLM. The repository maintainer does not need to supply or pay for an LLM API.
+Credentials belong to the user (Bring Your Own Model / Bring Your Own Key).
+No paid dependency, model, API key, internet connection, or Canton runtime is
+required for the default mode, tests, or golden evaluation.
+
+```text
+User-selected LLM
+        |
+        v
+LLMProvider abstraction
+        |
+        v
+GuardRail Agent
+        |
+        v
+Deterministic Safety Layer
+        |
+        v
+Existing Daml Boundary
+```
+
+Changing the LLM does not change the safety boundary. Every response is untrusted
+and must pass strict JSON parsing, schema validation, the read-only tool
+allowlist, risk computation, and deterministic guardrails. Models have identical
+restricted privileges; human approval and Daml authority remain unchanged.
+The CLI still uses demo context and mock execution, regardless of provider.
+
+List modes:
+
+```bash
+python3 -m ai_agent.cli providers
+```
+
+**1. Mock (default): offline, deterministic, free to run; suitable for testing and evaluation.**
+
+```bash
+python3 -m ai_agent.cli assess "Pay Alice 0.05 CC for coffee"
+python3 -m ai_agent.cli assess "Pay Alice 0.05 CC for coffee" --provider mock
+python3 -m ai_agent.cli eval
+```
+
+**2. Generic OpenAI-compatible hosted API (optional).** Choose an endpoint and
+model from your provider. Replace the placeholders below. Supply your own key
+through the environment or a secret manager; never put a key in CLI arguments,
+source files, or Git. For example, in Bash/Zsh, read it without echo or history:
+
+```bash
+export LLM_BASE_URL="https://YOUR_PROVIDER_HOST/v1"
+export LLM_MODEL="USER_MODEL_NAME"
+read -rs LLM_API_KEY
+export LLM_API_KEY
+python3 -m ai_agent.cli assess "Pay Alice 0.05 CC for coffee" --provider openai-compatible
+```
+
+The endpoint must support chat completions with JSON response format. There is
+no fixed vendor, endpoint, or model name. Provider charges and availability are
+the user's responsibility; third-party APIs are not claimed to be free.
+
+**3. Ollama / local model (optional).** Install Ollama yourself if desired, start
+the server, then choose and download a model yourself. In one terminal:
+
+```bash
+ollama serve
+```
+
+In another terminal, replace `USER_LOCAL_MODEL` with your chosen model:
+
+```bash
+ollama pull USER_LOCAL_MODEL
+python3 -m ai_agent.cli assess "Pay Charlie 0.6 CC for dinner" --provider ollama --model USER_LOCAL_MODEL
+```
+
+Alternatively set `OLLAMA_MODEL`. `OLLAMA_BASE_URL` defaults to
+`http://localhost:11434`. No API key is sent in Ollama mode. GuardRail Wallet
+never installs Ollama, starts a server, or downloads weights. Local inference
+can avoid hosted API charges, but uses your hardware and electricity; model
+availability and hardware requirements depend on your choice. The adapter uses
+Ollama's non-streaming JSON [chat API](https://docs.ollama.com/api/chat).
+
+**4. LM Studio or another local OpenAI-compatible server (optional).** Start your
+chosen server and load a model yourself. Replace the model placeholder:
+
+```bash
+unset LLM_API_KEY
+export LLM_BASE_URL="http://localhost:1234/v1"
+python3 -m ai_agent.cli assess "Pay Alice 0.05 CC for coffee" --provider openai-compatible --model USER_LOCAL_MODEL
+```
+
+The project does not need to identify the backend. A loopback endpoint may omit
+the API key; a non-loopback OpenAI-compatible endpoint requires a user key and
+HTTPS. HTTP is allowed only for explicit loopback hosts (`localhost`, loopback
+IP addresses). Redirects and ambient HTTP proxies are disabled so credentials
+stay with the configured endpoint.
+
+Configuration precedence is **CLI arguments > environment > safe defaults**:
+`--provider` / `LLM_PROVIDER` / `mock`; `--model` / `LLM_MODEL` or `OLLAMA_MODEL`;
+`--base-url` / `LLM_BASE_URL` or `OLLAMA_BASE_URL`. There is no default model or
+hosted endpoint. Setting just a key, endpoint, or model never activates external
+inference. Explicit selection via `--provider` or `LLM_PROVIDER` authorizes
+sending request and demo context to that endpoint without another inference
+prompt; payment approval requirements remain unchanged. `--provider mock`
+overrides external environment selection, and `eval` always uses mock.
+
+`.env.example` is a placeholder reference. `.env` is ignored and is **not loaded
+automatically**; export variables in your shell. Secrets are environment-only;
+there is no key CLI flag or config-file loader. Unavailable providers, missing
+configuration, and malformed responses fail closed without fallback to another
+provider. Invalid intent blocks; failure during recommendation escalates to
+human review while deterministic hard blocks still apply. Provider errors are
+sanitized, and credentials are excluded from audit records. Automated tests use
+fake HTTP transports; no live hosted or local model integration is claimed.
