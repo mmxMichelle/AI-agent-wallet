@@ -129,6 +129,65 @@ class MandateClientBuilderTests(unittest.TestCase):
             },
         )
 
+    def test_charge_command_shape(self) -> None:
+        command = mc.charge_command(
+            "cid-5",
+            amount="50",
+            recipient="Recipient::789",
+            purpose="Monthly subscription",
+            package_ref="#pkg-ref",
+        )
+        self.assertEqual(
+            command,
+            {
+                "ExerciseCommand": {
+                    "templateId": "#pkg-ref:Mandate:Mandate",
+                    "contractId": "cid-5",
+                    "choice": "Charge",
+                    "choiceArgument": {
+                        "amount": "50",
+                        "recipient": "Recipient::789",
+                        "purpose": "Monthly subscription",
+                    },
+                }
+            },
+        )
+
+    def test_extract_created_events(self) -> None:
+        response = {
+            "transaction": {
+                "events": [
+                    {
+                        "CreatedTreeEvent": {
+                            "value": {
+                                "value": {
+                                    "templateId": "#pkg:Mandate:MandateProposal",
+                                    "contractId": "proposal-cid",
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "CreatedTreeEvent": {
+                            "value": {
+                                "value": {
+                                    "templateId": "#pkg:Mandate:Mandate",
+                                    "contractId": "mandate-cid",
+                                }
+                            }
+                        }
+                    },
+                ]
+            }
+        }
+        self.assertEqual(
+            mc.extract_created_events(response),
+            [
+                {"templateId": "#pkg:Mandate:MandateProposal", "contractId": "proposal-cid"},
+                {"templateId": "#pkg:Mandate:Mandate", "contractId": "mandate-cid"},
+            ],
+        )
+
     def test_cli_parsing(self) -> None:
         parser = mc.build_parser()
         args = parser.parse_args(
